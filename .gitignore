@@ -1,0 +1,10 @@
+# generated or fetched, never committed
+**/papers/*.pdf
+**/papers/*.md
+**/results/
+**/data/m5/
+**/data/**/*.npz
+**/logs_*.txt
+__pycache__/
+.pytest_cache/
+*.log
