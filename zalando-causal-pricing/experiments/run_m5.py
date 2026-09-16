@@ -70,7 +70,10 @@ if __name__ == "__main__":
         for k in ("q", "d", "avail", "price", "base_price_last", "static_cat", "ids"):
             data[k] = data[k][idx]
 
-    static_num = np.log(np.nan_to_num(data["base_price_last"], nan=1.0))[:, None].clip(-2, 6).astype(np.float32)
+    # base price = expanding max of price up to and including each week: known at the forecast origin.
+    # (Using the series-final base price here would leak post-origin price highs for up to 5.7% of series.)
+    base = np.fmax.accumulate(data["price"], axis=1)
+    static_num = np.log(np.nan_to_num(base, nan=1.0)).clip(-2, 6)[..., None].astype(np.float32)
     n_cat = data["n_cat"]
 
     Wtr = windows(data, static_num, range(C - 1, 256, 3))

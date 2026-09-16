@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")/.."  # project root
 P="python3 -W ignore"
-ALL=tf,dml,dml-nocf,sdml,mdl
+ALL=tf,dml,dml-nocf,sdml,mdl,lgbm,dml-lgbm,dml-lgbm-ar
 for cfg in "calibrated 10 0.1" "literal 1 0"; do
   set -- $cfg
   $P experiments/run_synthetic.py --seeds 3 --periods 4 --epochs 8 --nuisance_epochs 48 --models $ALL --sharpness $2 --noise_mult $3 --out results/results_synthetic_$1.csv --resume > results/logs_synthetic_$1.txt 2>&1

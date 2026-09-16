@@ -20,6 +20,7 @@ import pandas as pd
 import synthetic
 from common import make_windows, metrics
 from dml import Forecaster
+from lgbm import DMLLGBMForecaster, LGBMForecaster
 from mdl import MDLForecaster
 
 C, H = 20, 5
@@ -42,7 +43,11 @@ def windows(A, origins):
 
 
 def build(kind, head, loss, epochs, effect_epochs, seed):
-    """kind 'mdl' = arXiv:2305.14406 model; everything else = arXiv:2312.15282v2 DML Forecaster and its ablations."""
+    """kind 'mdl' = arXiv:2305.14406 model; 'lgbm' = direct multi-horizon LightGBM; everything else = arXiv:2312.15282v2 DML Forecaster and its ablations."""
+    if kind == "lgbm":  # LightGBM models log their early-stopped tree counts (convergence record)
+        return LGBMForecaster(head, seed=seed, log=lambda s: print(f"  [{kind}] {s}", flush=True))
+    if kind.startswith("dml-lgbm"):
+        return DMLLGBMForecaster(head, seed=seed, log=lambda s: print(f"  [{kind}] {s}", flush=True), ar=kind.endswith("-ar"))
     if kind.startswith("mdl"):
         return MDLForecaster(head, epochs=epochs, seed=seed, log=lambda s: None, anchor=kind == "mdl-anchored")
     return Forecaster(kind, head, loss, epochs=epochs, effect_epochs=effect_epochs, seed=seed, log=lambda s: None)

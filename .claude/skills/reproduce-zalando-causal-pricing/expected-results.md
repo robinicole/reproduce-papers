@@ -47,17 +47,24 @@ Checks:
 
 ## M5 (weekly, 4-week horizon)
 
-| model | MAE all | MAE price-change windows | elasticity |
+| model | MAE all | MAE price change | elasticity |
 |---|---|---|---|
-| dml / dml-nocf / sdml / tf | 3.62 | 6.80 to 6.87 | −0.04 to −0.11 |
-| mdl | 3.73 | 6.62 | −0.68 |
-| mdl-anchored | 3.76 | 6.51 | −0.58 |
-| last4 (naive) | 3.84 | 7.62 | – |
+| `lgbm`, converged | 3.61 | **5.10** | -2.93 |
+| `dml` / `dml-nocf` / `sdml` / `tf`, 12 ep | 3.59 to 3.60 | 6.68 to 6.76 | -0.03 to -0.10 |
+| `mdl-anchored`, 12 ep | 3.84 | 6.13 | -0.8 |
+| `dml-lgbm` | 3.62 | 7.13 | -0.42 |
+| `last4` (naive) | 3.84 | 7.62 | n/a |
 
 Checks:
-- All trained models beat `last4` on both slices.
-- The four paper-1 variants tie on `MAE all` to two decimals; the two paper-2 variants are the
-  best on the price-change slice by a few percent and report a clearly negative elasticity, while the DML
-  variants' elasticities sit near zero (prices on M5 rarely move, so the residual discount is
-  tiny). The price-change slice has about 130 to 140 windows per origin; if it is empty, the
-  discount definition in `data/m5_data.py` (expanding-max base price) was changed.
+- Every trained model beats `last4` on MAE over all windows.
+- `lgbm` is clearly best on the price-change slice, roughly 17% below the best transformer, with
+  less than half its squared error. If it is not, check the tree counts in the log first: a fit
+  sitting at the cap is a truncated model, so raise `LGBM_MAX_TREES` (12000 was enough; fits then
+  stop between about 3400 and 9000 trees).
+- `dml-lgbm` is *worse* than plain `lgbm` on the price-change slice, and its demand error there
+  exceeds 1.0. That is the expected result on M5, not a bug: prices barely move, so the treatment
+  residual DML divides by is mostly noise.
+- Neural models at 4 epochs are undertrained on the price slice. The 12-epoch rows improve there
+  while `mdl` and `mdl-anchored` get *worse* on MAE over all windows, trading level for response.
+- The price-change slice holds 137 to 210 windows per origin, so treat small gaps there as
+  suggestive. If it is empty, the discount definition in `data/m5_data.py` was changed.

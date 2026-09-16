@@ -48,6 +48,7 @@ def week_feats(week, period):
 
 def make_windows(q, d, extra, week, static_cat, static_num, origins, C, H, period=52, with_y=True, valid=None):
     """q, d, extra[k]: (n_items, T) arrays; week: (T,); origins: forecast-origin indices (last observed step).
+    static_num: (n_items, k) constants, or (n_items, T, k) evaluated at each window's origin (causal).
     valid: optional (n_items, T) bool; windows touching an invalid step are dropped.
     Returns one window per (item, origin). Windows whose context has no sales are dropped."""
     n, T = q.shape
@@ -61,12 +62,13 @@ def make_windows(q, d, extra, week, static_cat, static_num, origins, C, H, perio
                               + [np.log1p(e[:, ctx])[..., None] for e in extra]
                               + [np.broadcast_to(wf[ctx], (n, C, 3))], -1)
         fut = np.broadcast_to(wf[hor], (n, H, 3)).copy() if with_y else np.broadcast_to(wf[t + 1:t + 1 + H], (n, H, 3)).copy()
+        sn = static_num[:, t] if static_num.ndim == 3 else static_num
         keep = qc.sum(1) > 0
         if valid is not None:
             keep &= valid[:, t - C + 1:t + 1 + H].all(1)
         P.append(past[keep]); Fu.append(fut[keep]); D.append(d[keep][:, hor] if with_y else np.zeros((keep.sum(), H), np.float32))
         Y.append(q[keep][:, hor] if with_y else np.zeros((keep.sum(), H), np.float32))
-        SC.append(static_cat[keep]); SN.append(static_num[keep]); S.append(scale[keep]); I.append(np.where(keep)[0])
+        SC.append(static_cat[keep]); SN.append(sn[keep]); S.append(scale[keep]); I.append(np.where(keep)[0])
     cat = lambda xs, dt=np.float32: np.ascontiguousarray(np.concatenate(xs)).astype(dt)
     return Windows(cat(P), cat(Fu), cat(D), cat(Y), cat(SC, np.int64), cat(SN), cat(S), cat(I, np.int64))
 

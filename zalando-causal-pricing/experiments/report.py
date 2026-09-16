@@ -14,7 +14,7 @@ RES = ROOT / "results"
 
 SYN_COLS = ["off_MAE", "on_MAE", "off_MSE", "on_MSE", "eff_MAE", "eff_MSE"]
 NAMES = {"dml": "DML Forecaster (paper 1)", "dml-nocf": "DML, no cross-fitting", "sdml": "sDML (no treatment model)",
-         "tf": "TF, linear head S-learner (paper 1 ablation)", "mdl": "Monotonic-demand transformer (paper 2)", "mdl-anchored": "paper 2 model anchored to recent demand level (ablation)", "last4": "naive: mean of last 4 weeks"}
+         "tf": "TF, linear head S-learner (paper 1 ablation)", "mdl": "Monotonic-demand transformer (paper 2)", "mdl-anchored": "paper 2 model anchored to recent demand level (ablation)", "lgbm": "direct multi-horizon LightGBM (S-learner, paper 2 baseline)", "dml-lgbm": "DML layout, direct multi-horizon LightGBM nuisances", "dml-lgbm-ar": "DML layout, autoregressive LightGBM nuisances", "last4": "naive: mean of last 4 weeks"}
 
 
 def load(pattern, suffix_epochs):
@@ -23,10 +23,10 @@ def load(pattern, suffix_epochs):
     for f in sorted(glob.glob(str(RES / pattern))):
         df = pd.read_csv(f)
         tag = f.rsplit("_", 1)[-1].replace(".csv", "")
-        if tag[-2:].isdigit():  # e.g. tf24, mdl48
-            df["model"] = df["model"] + f" ({tag[-2:]} ep)"
-        elif suffix_epochs:
-            df["model"] = df["model"] + f" ({suffix_epochs} ep)"
+        ep = tag[-2:] if tag[-2:].isdigit() else suffix_epochs  # e.g. tf24, mdl48
+        if ep:
+            nn = ~df["model"].isin(["lgbm", "dml-lgbm", "dml-lgbm-ar", "last4"])  # no epochs for non-neural models
+            df.loc[nn, "model"] = df.loc[nn, "model"] + f" ({ep} ep)"
         dfs.append(df)
     return pd.concat(dfs) if dfs else None
 
@@ -50,30 +50,34 @@ def m5_table(df):
 
 
 def headline():
-    """One table, both papers, all benchmarks (best-epoch variant of each model)."""
-    rows = {}
+    """One table, both papers, all benchmarks. Every trained variant gets a row: the epoch count is
+    NOT chosen by test error, which would be selection on the evaluation set."""
+    rows, base_of = {}, {}
     for setting in ["calibrated", "literal"]:
         df = load(f"results_synthetic_{setting}*.csv", 48)
         if df is None:
             continue
-        g = df.groupby("model")[SYN_COLS].mean()
-        g["base"] = [m.split(" (")[0] for m in g.index]
-        best = g.loc[g.groupby("base")["off_MAE"].idxmin()].set_index("base")  # best epoch count per model
-        for m, r in best.iterrows():
-            rows.setdefault(m, {})
+        for m, r in df.groupby("model")[SYN_COLS].mean().iterrows():
+            rows.setdefault(m, {}); base_of[m] = m.split(" (")[0]
             rows[m][f"{setting}: off-policy MAE"] = round(r["off_MAE"], 1)
             rows[m][f"{setting}: on-policy MAE"] = round(r["on_MAE"], 1)
             rows[m][f"{setting}: effect MAE"] = round(r["eff_MAE"], 1)
     df = load("results_m5*.csv", None)
     if df is not None:
-        for m, r in df[df["slice"] == "all"].groupby("model")[["MAE", "mean_psi"]].mean().iterrows():
-            rows.setdefault(m, {})["M5: MAE all"] = round(r["MAE"], 2)
-            rows[m]["M5: elasticity"] = round(r["mean_psi"], 2)
-        for m, r in df[df["slice"] == "price_change"].groupby("model")[["MAE"]].mean().iterrows():
-            rows.setdefault(m, {})["M5: MAE price change"] = round(r["MAE"], 2)
-    order = [m for m in NAMES if m in rows]
+        a = df[df["slice"] == "all"].groupby("model")[["MAE", "mean_psi"]].mean()
+        pc = df[df["slice"] == "price_change"].groupby("model")["MAE"].mean()
+        for m in list(a.index):  # only models absent from the synthetic runs (naive baseline) get a row
+            if not any(b == m for b in base_of.values()):
+                rows[m] = {}; base_of[m] = m
+        for m in rows:
+            b = base_of[m]
+            if b in a.index:
+                rows[m]["M5: MAE all"] = round(a.loc[b, "MAE"], 2)
+                rows[m]["M5: MAE price change"] = round(pc.get(b, float("nan")), 2)
+                rows[m]["M5: elasticity"] = round(a.loc[b, "mean_psi"], 2)
+    order = sorted(rows, key=lambda m: (list(NAMES).index(base_of[m]) if base_of[m] in NAMES else 99, m))
     t = pd.DataFrame.from_dict(rows, orient="index").loc[order]
-    t.index = [f"{m} — {NAMES[m]}" for m in t.index]
+    t.index = [f"{m} — {NAMES.get(base_of[m], base_of[m])}" for m in t.index]
     return t.to_markdown(floatfmt=".2f")
 
 
@@ -89,7 +93,7 @@ def inject_readme(table):
 if __name__ == "__main__":
     md = ["# Results\n", "Model key: " + "; ".join(f"`{k}` = {v}" for k, v in NAMES.items()) + "\n"]
     head = headline()
-    md += ["\n## Headline comparison (best epoch count per model; synthetic = mean over 4 periods x 3 seeds)\n", head, ""]
+    md += ["\n## Headline comparison (every variant; synthetic = mean over 4 periods x 3 seeds; M5 neural models all at 4 epochs)\n", head, ""]
     inject_readme(head)
     for setting, desc in [("calibrated", "policy sharpness 10, multiplicative noise 0.1 (matches the paper's error magnitude)"),
                           ("literal", "appendix rule verbatim (sharpness 1), no extra noise")]:
