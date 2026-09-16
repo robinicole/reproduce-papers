@@ -24,6 +24,8 @@ The headline numbers are below; the full tables land in `results/RESULTS.md` aft
 | `data/m5_data.py` | M5 daily sales to weekly demand; discount = 1 − price / expanding-max price per series. Raw CSVs go in `data/m5/`. |
 | `experiments/run_synthetic.py` | Paper 1's synthetic protocol: four training periods, on-policy and off-policy evaluation (six constant discount levels with simulator ground truth), effect error. |
 | `experiments/run_m5.py` | M5 protocol: 26-week context, 4-week horizon, four forecast origins; all windows plus a "price change" slice as an off-policy proxy. |
+| `models/twfe.py` | Two-way fixed-effects Poisson (PPML) elasticity, paper 1's econometric baseline. Item and week effects absorbed by closed-form updates on the dense panel. |
+| `experiments/elasticity_m5.py` | Answers "what is the M5 elasticity, and whose estimate should you trust": PPML reference overall and per category, against each forecaster's implied elasticity and its accuracy where price moved. |
 | `experiments/report.py` | Collects `results/*.csv` into `results/RESULTS.md` and refreshes the table below. |
 | `scripts/run_all.sh`, `scripts/run_extra.sh` | The full pipeline (about two hours on one GPU), plus the anchored paper-2 ablation. |
 | `tests/` | `pytest` runs the three module self-checks on CPU. |
@@ -168,6 +170,33 @@ How to read it, benchmark by benchmark:
   there exceeds 1.0, which is worse than forecasting nothing. M5 prices barely move, with a mean
   discount of 2.3% and only a sixth of weeks above 5%, so the treatment residual that DML
   orthogonalizes against is mostly noise, and dividing by it manufactures variance.
+
+### Which elasticity to believe on M5
+
+M5 has no ground-truth elasticity, so the forecasters' estimates cannot be scored. Two independent
+fixed-effects estimators agree on a reference: PPML gives -0.417 and a log-log within-estimator on
+positive-sales weeks gives -0.463, over 6.7M item-weeks. Category heterogeneity dwarfs that pooled
+number: foods -0.581, hobbies -0.215, household -0.093.
+
+Against that reference the forecasters split in a way that inverts the accuracy ranking:
+
+| Model | Implied elasticity | Gap vs PPML | MAE where price moved |
+|---|---|---|---|
+| LightGBM S-learner | -2.93 | -2.51 | **5.10** |
+| Paper-2, anchored | -0.79 | -0.37 | 6.34 |
+| Paper-2 monotone head | -0.53 | -0.11 | 6.52 |
+| DML with LightGBM | **-0.42** | -0.00 | 7.13 |
+| Naive TF / DML / sDML | -0.16 to -0.02 | +0.25 to +0.40 | 6.71 to 6.82 |
+
+The best forecaster on price-change windows carries an elasticity seven times the reference, and the
+model that reproduces the reference to two decimals is the worst forecaster. The S-learner attributes
+everything that moves with price, such as promotion timing and display, to price itself, which
+predicts recurring promotions well and answers the counterfactual question badly. The DML
+transformers fail the opposite way, attenuating toward zero because M5 leaves almost no exogenous
+price variation to orthogonalize against. Neither failure is visible in forecast error alone.
+
+Caveat that binds every row: M5 publishes no promotion or display flags, so all of these estimates,
+the reference included, omit a variable known to move with price.
 
 ## Data leakage audit
 
