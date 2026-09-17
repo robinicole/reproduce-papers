@@ -10,9 +10,14 @@ class Panel:
     """A dense (series, time) panel, in the variable taxonomy Nixtla uses.
 
     y           (n, T)            target, the thing being forecast
-    treatment   (n, T)            the variable you intervene on (discount). Known through the
+    treatment   (n, T[, K])       the variables you intervene on: the discount alone, or several
+                                  (discount, log base price, log stock). Known through the
                                   horizon, like a future exogenous, but kept separate because the
-                                  causal models residualize it and forecast under changes to it.
+                                  causal models residualize them and forecast under changes to them.
+    treatments  K x (name, kind, sign)  what each treatment column is: kind "discount" (a fraction;
+                                  the multiplicative head maps it to log(1-d)) or "linear" (already
+                                  in effect space); sign = expected direction of demand's response in
+                                  natural units. Default: a single discount.
     hist        (n, T, n_hist)    HISTORICAL exogenous: known only up to the forecast origin, so it
                                   is read from the context and never from the horizon (stock, past
                                   prices, past traffic). Pass it already transformed.
@@ -41,6 +46,7 @@ class Panel:
     static_cat: np.ndarray = None
     static_num: np.ndarray = None
     valid: np.ndarray = None
+    treatments: tuple = (("discount", "discount", +1),)
     ids: np.ndarray = None
     times: np.ndarray = None
     names: dict = None
@@ -52,6 +58,9 @@ class Panel:
         z = lambda a, k: np.zeros((n, T, k), np.float32) if a is None else np.asarray(a, np.float32)
         self.y = np.asarray(self.y, np.float32)
         self.treatment = np.asarray(self.treatment, np.float32)
+        if self.treatment.ndim == 2:
+            self.treatment = self.treatment[..., None]
+        assert self.treatment.shape[-1] == len(self.treatments), "one (name, kind, sign) per treatment column"
         self.hist, self.futr = z(self.hist, 0), z(self.futr, 0)
         if self.static_cat is None:
             self.static_cat = np.zeros((n, 1), np.int64)
@@ -71,11 +80,13 @@ class Panel:
     @classmethod
     def from_long(cls, df, id_col="unique_id", time_col="ds", target_col="y", treatment_col=None,
                   static_cat=(), static_num=(), hist_exog=(), futr_exog=(), valid_col=None,
-                  y_past_transform=np.log1p, drop_inactive=True):
+                  y_past_transform=np.log1p, drop_inactive=True, treatments=None):
         """Build from a long DataFrame in Nixtla layout (one row per series-timestamp).
 
-        Missing series-timestamp combinations are filled and marked invalid, so a ragged panel is
-        fine. Categorical statics are factorized to codes. Everything else is taken as float.
+        treatment_col may be one column or a list; `treatments` then declares (name, kind, sign)
+        per column (default: every column a discount). Missing series-timestamp combinations are
+        filled and marked invalid, so a ragged panel is fine. Categorical statics are factorized to
+        codes. Everything else is taken as float.
         """
         import pandas as pd
         ids = np.sort(df[id_col].unique())
@@ -86,19 +97,22 @@ class Panel:
         grid = lambda c: g[c].to_numpy(dtype=np.float64).reshape(n, T)
         y = np.nan_to_num(grid(target_col))
         valid = np.nan_to_num(grid(valid_col)).astype(bool) if valid_col else ~np.isnan(grid(target_col))
-        treat = np.nan_to_num(grid(treatment_col)) if treatment_col else np.zeros((n, T))
         stack = lambda cols: (np.stack([np.nan_to_num(grid(c)) for c in cols], -1)
                               if len(cols) else np.zeros((n, T, 0), np.float32))
+        t_cols = [treatment_col] if isinstance(treatment_col, str) else list(treatment_col or [])
+        treat = stack(t_cols) if t_cols else np.zeros((n, T, 1))
+        spec = tuple(treatments or [(c, "discount", +1) for c in t_cols] or [("discount", "discount", +1)])
         first = df.drop_duplicates(id_col).set_index(id_col).reindex(ids)
         s_cat = (np.stack([pd.factorize(first[c])[0] for c in static_cat], -1)
                  if len(static_cat) else np.zeros((n, 1), np.int64))
         s_num = (first[list(static_num)].to_numpy(np.float32)
                  if len(static_num) else np.zeros((n, 1), np.float32))
         return cls(y=y, treatment=treat, hist=stack(hist_exog), futr=stack(futr_exog),
-                   static_cat=s_cat, static_num=np.nan_to_num(s_num), valid=valid, ids=ids, times=times,
+                   static_cat=s_cat, static_num=np.nan_to_num(s_num), valid=valid, treatments=spec,
+                   ids=ids, times=times,
                    names={"hist": list(hist_exog), "futr": list(futr_exog),
                           "static_cat": list(static_cat), "static_num": list(static_num),
-                          "target": target_col, "treatment": treatment_col},
+                          "target": target_col, "treatment": t_cols},
                    y_past_transform=y_past_transform, drop_inactive=drop_inactive)
 
 
@@ -132,10 +146,16 @@ class Windows:
         return Windows(**{k: getattr(self, k)[idx] for k in self.KEYS + ("item",)},
                        extras={k: v[idx] for k, v in self.extras.items()})
 
-    def with_discount(self, d):
+    def with_treatment(self, value, k=0):
+        """A copy with treatment k set over the horizon: a scalar, or an (N,) / (N, H) array."""
         w = self.subset(slice(None))
-        w.d_fut = np.broadcast_to(np.asarray(d, dtype=np.float32), self.d_fut.shape).copy()
+        w.d_fut = self.d_fut.copy()
+        v = np.asarray(value, np.float32)
+        w.d_fut[..., k] = v[:, None] if v.ndim == 1 else v
         return w
+
+    def with_discount(self, d):
+        return self.with_treatment(d, 0)
 
     def tensors(self, idx):
         import torch
@@ -155,7 +175,9 @@ class Windows:
 def make_windows(panel, origins, C, H, with_y=True):
     """Cut a Panel into windows. origins are indices of the last observed step; context is
     origin-C+1 : origin+1, horizon is origin+1 : origin+1+H. Windows whose context has no activity
-    (if the panel says so), or which touch an invalid step, are dropped."""
+    (if the panel says so), or which touch an invalid step, are dropped.
+    past = [transform(y), *treatments, *hist, *futr] over the context; fut = [*futr] over the
+    horizon; d_fut = the treatments over the horizon, (N, H, K)."""
     y, d = panel.y, panel.treatment
     n, T = y.shape
     tf = panel.y_past_transform or (lambda a: a)
@@ -164,15 +186,14 @@ def make_windows(panel, origins, C, H, with_y=True):
         ctx, hor = slice(t - C + 1, t + 1), slice(t + 1, t + 1 + H)
         yc = y[:, ctx]
         scale = yc.mean(1) + 1.0
-        past = np.concatenate([tf(yc)[..., None], d[:, ctx][..., None],
-                               panel.hist[:, ctx], panel.futr[:, ctx]], -1)
+        past = np.concatenate([tf(yc)[..., None], d[:, ctx], panel.hist[:, ctx], panel.futr[:, ctx]], -1)
         fut = panel.futr[:, hor] if with_y else panel.futr[:, t + 1:t + 1 + H]
         sn = panel.static_num[:, t] if panel.static_num.ndim == 3 else panel.static_num
         keep = yc.sum(1) > 0 if panel.drop_inactive else np.ones(n, bool)
         if panel.valid is not None:
             keep &= panel.valid[:, t - C + 1:t + 1 + H].all(1)
         P.append(past[keep]); Fu.append(fut[keep].copy())
-        D.append(d[keep][:, hor] if with_y else np.zeros((keep.sum(), H), np.float32))
+        D.append(d[keep][:, hor] if with_y else np.zeros((keep.sum(), H, d.shape[-1]), np.float32))
         Y.append(y[keep][:, hor] if with_y else np.zeros((keep.sum(), H), np.float32))
         SC.append(panel.static_cat[keep]); SN.append(sn[keep]); S.append(scale[keep])
         I.append(np.where(keep)[0])

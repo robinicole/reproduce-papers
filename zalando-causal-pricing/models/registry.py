@@ -3,6 +3,8 @@ epochs. Runners, the report, the pipeline and the tests all read this and nothin
 from dataclasses import dataclass, field
 from typing import Callable
 
+from heads import DISCOUNT
+
 from dml import DML, TFForecaster, TorchEffect, TorchNuisance
 from lgbm import LGBMEffect, LGBMNuisance, LGBMSLearner
 from mdl import MDLForecaster
@@ -19,6 +21,7 @@ class Config:
     lr: float = 1e-3
     max_trees: int = 2000       # LightGBM early-stopping cap; check the logged tree counts against it
     net: dict = field(default_factory=dict)
+    treatments: tuple = DISCOUNT  # the panel's treatment spec, K x (name, kind, sign); see heads.py
 
 
 @dataclass
@@ -31,16 +34,18 @@ class Spec:
 def _torch_dml(cross_fit=True, treatment_model=True):
     return lambda c, n_cat: DML(
         c.head,
-        nuisance=lambda fold: TorchNuisance(n_cat, c.head, c.loss, c.epochs, c.lr, c.seed, c.net, treatment_model, fold),
-        effect=lambda: TorchEffect(n_cat, c.head, c.effect_epochs, c.lr, c.seed, c.net),
+        c.treatments,
+        nuisance=lambda fold: TorchNuisance(n_cat, c.head, c.treatments, c.loss, c.epochs, c.lr, c.seed, c.net, treatment_model, fold),
+        effect=lambda: TorchEffect(n_cat, c.head, c.treatments, c.effect_epochs, c.lr, c.seed, c.net),
         cross_fit=cross_fit)
 
 
 def _lgbm_dml(autoregressive):
     return lambda c, n_cat: DML(
         c.head,
-        nuisance=lambda fold: LGBMNuisance(c.head, c.seed, c.max_trees, autoregressive, fold),
-        effect=lambda: LGBMEffect(c.head, c.seed, c.max_trees))
+        c.treatments,
+        nuisance=lambda fold: LGBMNuisance(c.head, c.treatments, c.seed, c.max_trees, autoregressive, fold),
+        effect=lambda: LGBMEffect(c.head, c.treatments, c.seed, c.max_trees))
 
 
 MODELS = {
@@ -48,13 +53,13 @@ MODELS = {
     "dml-nocf": Spec("DML, no cross-fitting", True, _torch_dml(cross_fit=False)),
     "sdml": Spec("sDML (no treatment model)", True, _torch_dml(treatment_model=False)),
     "tf": Spec("TF, linear head S-learner (paper 1 ablation)", True,
-               lambda c, n: TFForecaster(n, c.head, c.loss, c.epochs, c.lr, c.seed, c.net)),
+               lambda c, n: TFForecaster(n, c.head, c.treatments, c.loss, c.epochs, c.lr, c.seed, c.net)),
     "mdl": Spec("Monotonic-demand transformer (paper 2)", True,
-                lambda c, n: MDLForecaster(n, c.head, c.epochs, c.lr, c.seed, c.net)),
+                lambda c, n: MDLForecaster(n, c.head, c.treatments, c.epochs, c.lr, c.seed, c.net)),
     "mdl-anchored": Spec("paper 2 model anchored to recent demand level (ablation)", True,
-                         lambda c, n: MDLForecaster(n, c.head, c.epochs, c.lr, c.seed, c.net, anchor=True)),
+                         lambda c, n: MDLForecaster(n, c.head, c.treatments, c.epochs, c.lr, c.seed, c.net, anchor=True)),
     "lgbm": Spec("direct multi-horizon LightGBM (S-learner, paper 2 baseline)", False,
-                 lambda c, n: LGBMSLearner(c.head, c.seed, c.max_trees)),
+                 lambda c, n: LGBMSLearner(c.head, c.treatments, c.seed, c.max_trees)),
     "dml-lgbm": Spec("DML layout, direct multi-horizon LightGBM nuisances", False, _lgbm_dml(False)),
     "dml-lgbm-ar": Spec("DML layout, autoregressive LightGBM nuisances", False, _lgbm_dml(True)),
 }

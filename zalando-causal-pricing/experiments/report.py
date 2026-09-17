@@ -24,11 +24,14 @@ def load(name):
         return None
     df = pd.read_csv(f)
     df["label"] = [label(m, e) for m, e in zip(df["model"], df["epochs"])]
+    if "treatments" in df:  # the omitted-treatment comparison in the multi setting
+        df.loc[(df["setting"] == "multi") & (df["treatments"] == "discount"), "label"] += " (discount only)"
     return df
 
 
 def synthetic_table(df):
-    g = df.groupby("label")[SYN_COLS]
+    extra = [c for c in df.columns if c.startswith(("eff_MAE_", "off_MAE_")) and df[c].notna().any()]
+    g = df.groupby("label")[SYN_COLS + extra]
     out = g.mean().round(1).astype(str) + " ± " + g.std().round(1).astype(str)
     out.insert(0, "runs", g.size())
     return out
@@ -77,8 +80,11 @@ if __name__ == "__main__":
     md = ["# Results\n", "\n## Headline comparison (every trained variant; synthetic = mean over periods x seeds)\n", head, ""]
     if syn is not None:
         for setting, d in syn.groupby("setting"):
-            md += [f"\n## Synthetic data, {setting} setting\n",
-                   "Mean ± std over 4 training periods x seeds. Off-policy = constant discount in {0,...,0.5} with simulator ground truth; effect = dq/d(discount) vs true -p0*e_i.\n",
+            note = ("Three confounded treatments (discount, log list price, log stock), log-linear demand. off_MAE = joint off-policy grid; "
+                    "off_MAE_<t> = intervening on one treatment; eff_MAE_<t> = effect-space coefficient error per treatment. "
+                    "'(discount only)' rows see the same data with a single treatment.\n" if setting == "multi" else
+                    "Mean ± std over 4 training periods x seeds. Off-policy = constant discount in {0,...,0.5} with simulator ground truth; effect = dq/d(discount) vs true -p0*e_i.\n")
+            md += [f"\n## Synthetic data, {setting} setting\n", note,
                    synthetic_table(d).to_markdown(), ""]
     if m5 is not None:
         md += ["\n## M5 (weekly, 30490 series, horizon 4 weeks, 4 forecast origins)\n",

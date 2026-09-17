@@ -21,6 +21,9 @@ STEPS = [
       for s in ("calibrated", "literal")],
     *[["experiments/run_synthetic.py", "--setting", s, "--models", "tf,mdl,mdl-anchored", "--epochs", "24", "--effect_epochs", "8"]
       for s in ("calibrated", "literal")],
+    # multi-treatment synthetic: every model with all three treatments, and again discount-only on the same data
+    ["experiments/run_synthetic.py", "--setting", "multi", "--treatments", "all", "--models", ALL, "--epochs", "48", "--effect_epochs", "8"],
+    ["experiments/run_synthetic.py", "--setting", "multi", "--treatments", "discount", "--models", ALL, "--epochs", "48", "--effect_epochs", "8"],
     # M5: transformers at two budgets; trees with a cap that is not binding on 1.7M windows
     ["experiments/run_m5.py", "--models", NEURAL, "--epochs", "4", "--effect_epochs", "3"],
     ["experiments/run_m5.py", "--models", NEURAL, "--epochs", "12", "--effect_epochs", "8"],

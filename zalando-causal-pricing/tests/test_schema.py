@@ -46,11 +46,11 @@ def test_variable_types_land_in_the_right_slices():
     assert W.past.shape == (N, C, 4) and W.fut.shape == (N, H, 1)
     y = np.array([[10.0 + i + t for t in range(4, 8)] for i in range(N)], np.float32)
     assert np.allclose(W.past[:, :, 0], np.log1p(y), atol=1e-5)          # target lags, transformed
-    assert np.allclose(W.past[:, :, 1], p.treatment[:, 4:8], atol=1e-6)  # treatment history
+    assert np.allclose(W.past[:, :, 1], p.treatment[:, 4:8, 0], atol=1e-6)  # treatment history
     assert np.allclose(W.past[:, :, 2], p.hist[:, 4:8, 0], atol=1e-6)    # historical exogenous
     assert np.allclose(W.past[:, :, 3], p.futr[:, 4:8, 0], atol=1e-6)    # future exogenous, context
     assert np.allclose(W.fut[:, :, 0], p.futr[:, 8:10, 0], atol=1e-6)    # future exogenous, horizon
-    assert np.allclose(W.d_fut, p.treatment[:, 8:10], atol=1e-6)         # the intervention
+    assert np.allclose(W.d_fut, p.treatment[:, 8:10], atol=1e-6)         # the intervention, (N, H, K)
     assert np.allclose(W.y, p.y[:, 8:10], atol=1e-6)
 
 
@@ -90,6 +90,21 @@ def test_feature_width_tracks_the_declared_schema(hist, futr, width):
                         static_cat=["store"], static_num=["base_price"])
     W = make_windows(p, [7], C, H)
     assert W.past.shape[-1] == width and W.fut.shape[-1] == len(futr)
+
+
+def test_several_treatments_are_one_declaration():
+    """Discount, log price and log stock as three treatment columns: the window carries all three in
+    the context and in the horizon block, and the spec travels with the panel."""
+    df = long_df()
+    df["log_price"], df["log_stock"] = np.log(df["base_price"]) + 0.01 * df["ds"], np.log1p(df["stock"])
+    spec = (("discount", "discount", +1), ("log_price", "linear", -1), ("log_stock", "linear", +1))
+    p = Panel.from_long(df, treatment_col=["discount", "log_price", "log_stock"], treatments=spec,
+                        futr_exog=["snap"], static_cat=["store"])
+    W = make_windows(p, [7], C, H)
+    assert p.treatment.shape == (N, T, 3) and W.d_fut.shape == (N, H, 3) and W.past.shape == (N, C, 5)
+    assert np.allclose(W.past[:, :, 1:4], p.treatment[:, 4:8], atol=1e-6)
+    w2 = W.with_treatment(0.3, 0)
+    assert np.allclose(w2.d_fut[..., 0], 0.3) and np.allclose(w2.d_fut[..., 1:], W.d_fut[..., 1:])
 
 
 def test_target_transform_is_configurable_for_non_count_targets():

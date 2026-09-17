@@ -42,7 +42,7 @@ def panel(data):
 
 
 def slices(Wt):
-    ctx_d, hor_d = Wt.past[:, -4:, 1].mean(1), Wt.d_fut.mean(1)
+    ctx_d, hor_d = Wt.past[:, -4:, 1].mean(1), Wt.d_fut[..., 0].mean(1)  # treatment 0 is the discount
     price_change = np.abs(hor_d - ctx_d) > 0.10
     return {"all": np.ones(len(Wt), bool), "price_change": price_change, "promo_start": price_change & (hor_d > ctx_d)}
 
@@ -54,7 +54,7 @@ def last4(Wt):
 
 def rows(origin, Wt, pred, psi):
     price = np.exp(Wt.static_num[:, 0])
-    psi = np.full(len(Wt), np.nan) if psi is None else psi
+    psi = np.full(len(Wt), np.nan) if psi is None else np.asarray(psi).reshape(len(Wt), -1)[:, 0]
     out = []
     for name, mask in slices(Wt).items():
         if mask.any():

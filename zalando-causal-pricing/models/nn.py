@@ -12,9 +12,10 @@ log = logging.getLogger(__name__)
 
 class SeqNet(nn.Module):
     """Encoder-only transformer over [context tokens | horizon tokens].
-    out='seq' -> one value per horizon step; out='scalar' -> pooled scalar."""
+    out='seq' -> n_out values per horizon step; out='scalar' -> n_out pooled values.
+    With n_out=1 the trailing axis is squeezed, so (N, H) and (N,)."""
 
-    def __init__(self, f_past, f_fut, n_cat, n_num, C, H, out="seq", d_model=64, n_layers=2, n_heads=4, dropout=0.1):
+    def __init__(self, f_past, f_fut, n_cat, n_num, C, H, out="seq", d_model=64, n_layers=2, n_heads=4, dropout=0.1, n_out=1):
         super().__init__()
         self.C, self.H, self.out = C, H, out
         self.past_in = nn.Linear(f_past, d_model)
@@ -25,7 +26,8 @@ class SeqNet(nn.Module):
         layer = nn.TransformerEncoderLayer(d_model, n_heads, 4 * d_model, dropout, batch_first=True, norm_first=True)
         self.enc = nn.TransformerEncoder(layer, n_layers)
         self.norm = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, 1)
+        self.n_out = n_out
+        self.head = nn.Linear(d_model, n_out)
 
     def forward(self, b):
         x = torch.cat([self.past_in(b["past"]), self.fut_in(b["fut"])], 1) + self.pos
@@ -33,15 +35,14 @@ class SeqNet(nn.Module):
         if self.num_in is not None:
             s = s + self.num_in(b["static_num"])
         h = self.norm(self.enc(x + s[:, None, :]))
-        if self.out == "scalar":
-            return self.head(h[:, self.C:].mean(1)).squeeze(-1)
-        return self.head(h[:, self.C:]).squeeze(-1)
+        y = self.head(h[:, self.C:].mean(1) if self.out == "scalar" else h[:, self.C:])
+        return y.squeeze(-1) if self.n_out == 1 else y
 
 
-def seqnet(W, n_cat, out, extra_fut=0, **net):
+def seqnet(W, n_cat, out, extra_fut=0, n_out=1, **net):
     """A SeqNet sized from the windows it will see."""
     return SeqNet(W.past.shape[-1], W.fut.shape[-1] + extra_fut, n_cat, W.static_num.shape[-1],
-                  W.past.shape[1], W.fut.shape[1], out, **net).to(DEV)
+                  W.past.shape[1], W.fut.shape[1], out, n_out=n_out, **net).to(DEV)
 
 
 def outcome_act(raw, scale):

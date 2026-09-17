@@ -50,7 +50,7 @@ def test_dml_layout_beats_the_same_trees_used_naively(toy_add):
 def test_monotone_head_is_monotone_in_discount(toy_add):
     P, Wtr, Wt, _ = toy_add
     m = build("mdl", FAST, P.n_cat).fit(Wtr)
-    assert (m._demand(Wt, 0.5) >= m._demand(Wt, 0.0) - 1e-4).all()
+    assert (m._demand(Wt.with_discount(0.5)) >= m._demand(Wt.with_discount(0.0)) - 1e-4).all()
 
 
 def test_multiplicative_head_runs_end_to_end(toy_mult):
@@ -68,6 +68,33 @@ def test_runs_are_reproducible(toy_add):
     a = fit_predict("dml", toy_add, Config(head="add", loss="l2", epochs=2, effect_epochs=2))[3]
     b = fit_predict("dml", toy_add, Config(head="add", loss="l2", epochs=2, effect_epochs=2))[3]
     assert np.array_equal(a, b)
+
+
+THREE = Config(head="mult", loss="l1", epochs=12, effect_epochs=12, max_trees=150)
+
+
+@pytest.mark.parametrize("name", list(MODELS))
+def test_every_model_handles_three_treatments(name, toy_three):
+    """Shapes and finiteness with a vector treatment: psi is (N, 3), forecasts are non-negative."""
+    P, Wtr, Wt, _ = toy_three
+    cfg = Config(**{**THREE.__dict__, "treatments": P.treatments, "epochs": 3, "effect_epochs": 3})
+    pred, psi = build(name, cfg, P.n_cat).fit(Wtr).predict(Wt)
+    assert pred.shape == Wt.y.shape and psi.shape == (len(Wt), 3)
+    assert np.isfinite(pred).all() and np.isfinite(psi).all() and (pred >= 0).all()
+
+
+def test_dml_separates_three_confounded_effects(toy_three):
+    """With all three treatments residualized, DML gets every sign right and beats the naive
+    transformer on each effect; the S-learner cannot tell the season from the treatments."""
+    P, Wtr, Wt, true = toy_three
+    cfg = Config(**{**THREE.__dict__, "treatments": P.treatments})
+    _, psi_dml = build("dml", cfg, P.n_cat).fit(Wtr).predict(Wt)
+    _, psi_tf = build("tf", cfg, P.n_cat).fit(Wtr).predict(Wt)
+    signs = np.array([-1, -1, +1])
+    assert (np.sign(psi_dml.mean(0)) == signs).all()
+    err_dml, err_tf = np.abs(psi_dml - true).mean(0), np.abs(psi_tf - true).mean(0)
+    assert (err_dml < np.abs(true).mean(0)).all(), err_dml          # not degenerate on any treatment
+    assert err_dml.sum() < err_tf.sum(), (err_dml, err_tf)
 
 
 def test_twfe_recovers_a_known_elasticity():
