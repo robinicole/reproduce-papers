@@ -45,6 +45,47 @@ M5 data: the Kaggle competition download requires accepting the competition rule
 are also published as Kaggle datasets (this repo used `aryayadav0513/m5-forecasting-accuracy`).
 Put `calendar.csv`, `sell_prices.csv`, `sales_train_evaluation.csv` in `data/m5/`; `data/m5_data.py` builds the weekly cache.
 
+## Using your own data
+
+Both papers' models read a shared `Panel`, which uses the variable taxonomy Nixtla uses, so a new
+dataset is a schema declaration rather than a code change:
+
+| Type | Meaning | Where it is read |
+|---|---|---|
+| target | the series being forecast | context, transformed by `y_past_transform` |
+| treatment | the variable you intervene on | context, and the horizon as the intervention |
+| historical exogenous | known only up to the forecast origin | context only |
+| future exogenous | known through the horizon | context and horizon |
+| static categorical / numeric | constant per series | every window (3-D numerics are read at the origin) |
+
+A Nixtla-style long frame (`unique_id`, `ds`, `y`) goes straight in:
+
+```python
+from common import Panel, make_windows
+
+panel = Panel.from_long(
+    df, id_col="unique_id", time_col="ds", target_col="y",
+    treatment_col="discount",                 # the thing you price
+    hist_exog=["stock", "web_traffic"],       # past only
+    futr_exog=["snap", "is_holiday", "week_sin", "week_cos"],   # known ahead
+    static_cat=["store", "category"], static_num=["base_price"],
+)
+W = make_windows(panel, origins=range(26, 250, 3), C=26, H=4)
+```
+
+Nothing else is wired to the column list: embedding sizes come from `panel.n_cat`, and the network
+input widths come from the window shapes. Missing series-timestamp rows are filled and marked
+invalid, so a ragged panel is safe. Two knobs carry the assumptions that would otherwise be silent:
+`y_past_transform` (defaults to `log1p`, right for counts, wrong for a target that goes negative)
+and `drop_inactive` (drops windows whose context target sums to zero, right for sales, wrong for a
+zero-mean series). `tests/test_schema.py` pins this contract, including that historical exogenous
+never reach the horizon block.
+
+What the two shipped datasets declare: the simulator passes stock as historical exogenous and a
+30-week calendar as future exogenous; M5 passes a 52-week calendar as future exogenous and uses
+availability as the validity mask. M5's SNAP and event flags are genuinely known ahead and would be
+added to `futr_exog` with no other change.
+
 ## The two methods in one paragraph each
 
 **Paper 2 (the production model, 2019 onwards).** One global transformer. The encoder reads the

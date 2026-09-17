@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from common import DEV, SeqNet, Windows, head, loss_fn, make_windows, outcome_act, predict, train
+from common import DEV, Panel, SeqNet, Windows, head, loss_fn, make_windows, outcome_act, predict, train, week_feats
 
 # ----------------------------------------------------------------------------- forecasters
 class Forecaster:
@@ -134,11 +134,11 @@ if __name__ == "__main__":
     d = np.clip(0.3 - 0.25 * season + rng.normal(0, 0.05, (n, T)), 0, 0.5)  # discount high when base low
     eff = rng.uniform(20, 60, n)
     q = base + eff[:, None] * d + rng.normal(0, 2, (n, T))
-    W = make_windows(q.astype(np.float32), d.astype(np.float32), [], np.arange(T), np.zeros((n, 1), np.int64),
-                     np.zeros((n, 1), np.float32), range(C - 1, T - H, 2), C, H, period=20)
+    P = Panel(y=q.astype(np.float32), treatment=d.astype(np.float32),
+              futr=np.broadcast_to(week_feats(np.arange(T), 20), (n, T, 3)))
+    W = make_windows(P, range(C - 1, T - H, 2), C, H)
     m = Forecaster("dml", "add", "l2", epochs=20, effect_epochs=20, log=lambda s: None).fit(W, [1])
-    Wt = make_windows(q.astype(np.float32), d.astype(np.float32), [], np.arange(T), np.zeros((n, 1), np.int64),
-                      np.zeros((n, 1), np.float32), [T - H - 1], C, H, period=20)
+    Wt = make_windows(P, [T - H - 1], C, H)
     _, psi = m.predict(Wt)
     err = np.abs(psi - eff[Wt.item]).mean()
     print("effect MAE", err, "(mean effect", eff.mean(), ")")

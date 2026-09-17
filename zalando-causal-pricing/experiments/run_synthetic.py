@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 import synthetic
-from common import make_windows, metrics
+from common import Panel, make_windows, metrics, week_feats
 from dml import Forecaster
 from lgbm import DMLLGBMForecaster, LGBMForecaster
 from mdl import MDLForecaster
@@ -37,9 +37,20 @@ def arrays(df):
                 static_num=np.log(first[["p0"]].to_numpy(np.float32)))
 
 
+def panel(A):
+    """The simulator in the shared schema: stock is historical exogenous (known only up to the
+    origin), the 30-week calendar is future exogenous, category codes and base price are static."""
+    n, T = A["q"].shape
+    return Panel(y=A["q"], treatment=A["d"],
+                 hist=np.log1p(A["stock"])[..., None],
+                 futr=np.broadcast_to(week_feats(np.arange(T), 30), (n, T, 3)),
+                 static_cat=A["static_cat"], static_num=A["static_num"],
+                 names={"hist": ["stock"], "futr": ["week", "sin", "cos"],
+                        "static_cat": ["cat_d", "cat_k"], "static_num": ["log_p0"]})
+
+
 def windows(A, origins):
-    return make_windows(A["q"], A["d"], [A["stock"]], np.arange(synthetic.T), A["static_cat"], A["static_num"],
-                        origins, C, H, period=30)
+    return make_windows(A if isinstance(A, Panel) else panel(A), origins, C, H)
 
 
 def build(kind, head, loss, epochs, effect_epochs, seed):
@@ -86,13 +97,14 @@ if __name__ == "__main__":
 
     df = synthetic.generate(sharpness=args.sharpness, noise_mult=args.noise_mult)
     A = arrays(df)
-    n_cat = [45, 15]
+    P = panel(A)
+    n_cat = P.n_cat  # embedding sizes derived from the panel, not hardcoded per dataset
     import os
     rows = pd.read_csv(args.out).to_dict("records") if args.resume and os.path.exists(args.out) else []
     done = {(r["period"], r["seed"], r["model"]) for r in rows}
     for a, b in PERIODS[:args.periods]:
-        Wtr = windows(A, range(a + C - 1, b - H + 1))
-        Wt = windows(A, [b])
+        Wtr = windows(P, range(a + C - 1, b - H + 1))
+        Wt = windows(P, [b])
         for seed in range(args.seeds):
             for kind in args.models.split(","):
                 if (f"{a}-{b}", seed, kind) in done:

@@ -14,17 +14,27 @@ import numpy as np
 import pandas as pd
 
 import m5_data
-from common import make_windows, metrics
+from common import Panel, make_windows, metrics, week_feats
 from run_synthetic import build
 
 C, H = 26, 4
 TEST = [260, 264, 268, 272]
 
 
+def panel(data, static_num):
+    """M5 in the shared schema. The 52-week calendar is future exogenous; availability marks weeks
+    the series is not sellable. SNAP and event flags are future exogenous too and would go in
+    `futr` alongside the calendar columns."""
+    n, T = data["q"].shape
+    return Panel(y=data["q"], treatment=data["d"],
+                 futr=np.broadcast_to(week_feats(np.arange(T), 52), (n, T, 3)),
+                 static_cat=data["static_cat"], static_num=static_num, valid=data["avail"],
+                 names={"futr": ["week", "sin", "cos"],
+                        "static_cat": ["dept", "cat", "store", "state"], "static_num": ["log_base_price"]})
+
+
 def windows(data, static_num, origins):
-    week = np.arange(data["q"].shape[1])
-    return make_windows(data["q"], data["d"], [], week, data["static_cat"], static_num,
-                        origins, C, H, valid=data["avail"])
+    return make_windows(panel(data, static_num) if not isinstance(data, Panel) else data, origins, C, H)
 
 
 def slice_masks(Wt):
@@ -74,12 +84,13 @@ if __name__ == "__main__":
     # (Using the series-final base price here would leak post-origin price highs for up to 5.7% of series.)
     base = np.fmax.accumulate(data["price"], axis=1)
     static_num = np.log(np.nan_to_num(base, nan=1.0)).clip(-2, 6)[..., None].astype(np.float32)
-    n_cat = data["n_cat"]
+    P = panel(data, static_num)
+    n_cat = P.n_cat  # derived from the panel, so a new schema needs no edit here
 
-    Wtr = windows(data, static_num, range(C - 1, 256, 3))
+    Wtr = windows(P, None, range(C - 1, 256, 3))
     print(f"training windows: {len(Wtr)}")
 
-    test_w = {origin: windows(data, static_num, [origin]) for origin in TEST}
+    test_w = {origin: windows(P, None, [origin]) for origin in TEST}
     for origin, Wt in test_w.items():
         s = slice_masks(Wt)
         print(f"origin {origin}: n={len(Wt)} price_change={s['price_change'].sum()} promo_start={s['promo_start'].sum()}")

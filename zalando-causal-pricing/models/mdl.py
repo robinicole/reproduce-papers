@@ -99,7 +99,7 @@ class MDLForecaster:
 
 
 if __name__ == "__main__":
-    from common import make_windows
+    from common import Panel, make_windows, week_feats
     rng = np.random.default_rng(0)
     n, T, C, H = 400, 40, 10, 3
     season = np.sin(2 * np.pi * np.arange(T) / 20)[None, :]
@@ -107,8 +107,9 @@ if __name__ == "__main__":
     d = np.clip(0.3 - 0.25 * season + rng.normal(0, 0.05, (n, T)), 0, 0.5)
     eff = rng.uniform(20, 60, n)
     q = base + eff[:, None] * d + rng.normal(0, 2, (n, T))
-    mk = lambda o: make_windows(q.astype(np.float32), d.astype(np.float32), [], np.arange(T), np.zeros((n, 1), np.int64),
-                                np.zeros((n, 1), np.float32), o, C, H, period=20)
+    P = Panel(y=q.astype(np.float32), treatment=d.astype(np.float32),
+              futr=np.broadcast_to(week_feats(np.arange(T), 20), (n, T, 3)))
+    mk = lambda o: make_windows(P, o, C, H)
     m = MDLForecaster("add", epochs=8, log=lambda s: None).fit(mk(range(C - 1, T - H, 2)), [1])
     Wt = mk([T - H - 1])
     pred, e = m.predict(Wt)

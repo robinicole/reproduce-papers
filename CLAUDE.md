@@ -21,6 +21,11 @@ Rules:
   between `<!-- RESULTS -->` markers, so re-read the prose after every regeneration.
 - Entry points under `experiments/` and `tests/` put `models/`, `data/` and `experiments/` on
   `sys.path`; modules import each other by bare name. Run everything from the reproduction folder.
+- Datasets enter through a `Panel` (see `models/common.py`), which uses Nixtla's variable taxonomy:
+  target, treatment, historical exogenous (context only), future exogenous (context and horizon),
+  and statics. `Panel.from_long` takes a long `unique_id`/`ds`/`y` frame. Adding a dataset means
+  declaring columns, not editing model code; keep it that way, and keep `tests/test_schema.py`
+  passing, since it pins the leak-relevant part of the contract.
 - Commands, per reproduction: `pytest` (tests), `papers/fetch.sh` (papers), `scripts/run_all.sh`
   (full pipeline, hours on a GPU), `python experiments/report.py` (tables).
 - The GPU on this machine is shared with an unrelated long-running Ollama server that holds most of
