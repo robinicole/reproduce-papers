@@ -6,10 +6,11 @@ One folder per reproduction. Each folder is self-contained and follows the same 
 <reproduction>/
   README.md        the write-up: methods, deviations from the papers, results table, assessment
   requirements.txt
-  models/          model code (shared pieces in common.py)
+  models/          model code: schema.py (data contract), heads.py, nn.py, one file per model, registry.py
   data/            simulators and data preparation; raw downloads live under data/ and are ignored
-  experiments/     runners that write results/*.csv, and report.py that builds results/RESULTS.md
-  scripts/         run_all.sh (full pipeline) and any follow-ups
+  experiments/     grid.py (shared loop), one runner per dataset, pipeline.py (every cell of the
+                   study), report.py (results/*.csv -> RESULTS.md and the README table)
+  scripts/         run_all.sh, a one-liner onto pipeline.py
   tests/           pytest; fast, CPU-only
   papers/          fetch.sh downloads the papers and converts them to markdown; outputs ignored
   results/         generated; ignored
@@ -21,13 +22,19 @@ Rules:
   between `<!-- RESULTS -->` markers, so re-read the prose after every regeneration.
 - Entry points under `experiments/` and `tests/` put `models/`, `data/` and `experiments/` on
   `sys.path`; modules import each other by bare name. Run everything from the reproduction folder.
-- Datasets enter through a `Panel` (see `models/common.py`), which uses Nixtla's variable taxonomy:
+- Models are registered by name in `models/registry.py` (constructor, display name, neural flag);
+  runners, report, pipeline and tests read that and nothing else. Behaviour switches are
+  constructor arguments, not strings to parse.
+- Results are one CSV per dataset with provenance columns (setting, budgets, git hash). Rows, not
+  filenames, say what a number is; `grid.run_grid` skips cells already present.
+- Datasets enter through a `Panel` (see `models/schema.py`), which uses Nixtla's variable taxonomy:
   target, treatment, historical exogenous (context only), future exogenous (context and horizon),
   and statics. `Panel.from_long` takes a long `unique_id`/`ds`/`y` frame. Adding a dataset means
   declaring columns, not editing model code; keep it that way, and keep `tests/test_schema.py`
   passing, since it pins the leak-relevant part of the contract.
 - Commands, per reproduction: `pytest` (tests), `papers/fetch.sh` (papers), `scripts/run_all.sh`
-  (full pipeline, hours on a GPU), `python experiments/report.py` (tables).
+  (the whole study, resumable, hours on a GPU), `python experiments/report.py` (tables).
+- Network construction is seeded as well as training; a run with the same seed reproduces exactly.
 - The GPU on this machine is shared with an unrelated long-running Ollama server that holds most of
   its memory. Run one training job at a time; concurrent jobs slow every fit by an order of
   magnitude and cause out-of-memory errors. Tests run on CPU.

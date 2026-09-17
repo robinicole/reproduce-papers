@@ -16,30 +16,38 @@ The headline numbers are below; the full tables land in `results/RESULTS.md` aft
 
 | Path | Purpose |
 |---|---|
-| `models/common.py` | Shared pieces: forecast windows, the small transformer block, training/prediction loops, metrics (MAE, MSE, price-weighted demand error). |
-| `models/dml.py` | Paper 1. Outcome model, treatment model, effect model; two-fold cross-fitting by item parity; cross-fit/own-fold ensemble at inference. Ablations: no cross-fitting, sDML (no treatment model), TF (naive S-learner with the same head). |
-| `models/mdl.py` | Paper 2. Encoder/decoder transformer; future discount bypasses the network and enters a piecewise-linear monotonic demand layer; Taylor-exponential loss on log demand. |
-| `models/lgbm.py` | LightGBM on the same windows. `lgbm`: direct multi-horizon S-learner (one regressor per step, future discounts as inputs), the tree baseline paper 2 benchmarks against. `dml-lgbm` / `dml-lgbm-ar`: paper 1's DML layout with direct or autoregressive LightGBM nuisances and a weighted-regression effect model. All fits use early stopping on a 10% item hold-out and log their tree counts. |
-| `data/synthetic.py` | Paper 1's Appendix E simulator: 4467 articles, 100 weeks, seasonal and trend base demand, linear price effect, stock-coverage pricing policy. Has knobs for policy sharpness and noise (see reproduction notes). |
+| `models/schema.py` | The data contract: `Panel` (Nixtla's variable taxonomy), `make_windows`, and the `Windows` batch container. |
+| `models/heads.py` | The two demand heads every model shares (additive for the linear simulator, constant-elasticity for real data), with the bounds that keep them finite, plus the finite-difference effect for S-learners. |
+| `models/dml.py` | Paper 1. `DML` runs the procedure once over pluggable learners: item-parity folds, cross-fitted residuals, one effect model, the cross-fit/own-fold ensemble. Ablations are arguments (`cross_fit=False`, `treatment_model=False`). Holds the paper's torch learners and its naive `TFForecaster` baseline. |
+| `models/mdl.py` | Paper 2. Encoder/decoder transformer; future discount bypasses the network into a piecewise-linear monotonic demand layer; Taylor-exponential loss on log demand; optional level anchoring. |
+| `models/lgbm.py` | LightGBM learners on the same windows: an S-learner, and DML nuisance/effect learners (direct or autoregressive). Every fit early-stops and logs its tree count. |
+| `models/twfe.py` | Two-way fixed-effects Poisson elasticity, paper 1's econometric baseline. |
+| `models/registry.py` | Every model by name: constructor, display name, whether it trains by epochs. The one place to add a model. |
+| `models/nn.py`, `models/metrics.py` | The transformer block with its training loop; MAE, MSE and the price-weighted demand error. |
+| `data/synthetic.py` | Paper 1's Appendix E simulator, with knobs for policy sharpness and noise (see reproduction notes). |
 | `data/m5_data.py` | M5 daily sales to weekly demand; discount = 1 − price / expanding-max price per series. Raw CSVs go in `data/m5/`. |
-| `experiments/run_synthetic.py` | Paper 1's synthetic protocol: four training periods, on-policy and off-policy evaluation (six constant discount levels with simulator ground truth), effect error. |
-| `experiments/run_m5.py` | M5 protocol: 26-week context, 4-week horizon, four forecast origins; all windows plus a "price change" slice as an off-policy proxy. |
-| `models/twfe.py` | Two-way fixed-effects Poisson (PPML) elasticity, paper 1's econometric baseline. Item and week effects absorbed by closed-form updates on the dense panel. |
-| `experiments/elasticity_m5.py` | Answers "what is the M5 elasticity, and whose estimate should you trust": PPML reference overall and per category, against each forecaster's implied elasticity and its accuracy where price moved. |
-| `experiments/report.py` | Collects `results/*.csv` into `results/RESULTS.md` and refreshes the table below. |
-| `scripts/run_all.sh`, `scripts/run_extra.sh` | The full pipeline (about two hours on one GPU), plus the anchored paper-2 ablation. |
-| `tests/` | `pytest` runs the three module self-checks on CPU. |
+| `experiments/grid.py` | The loop both runners share: cells × evaluate → one CSV with provenance columns (setting, budgets, git hash); finished cells are skipped, so every run resumes. |
+| `experiments/run_synthetic.py`, `experiments/run_m5.py` | The two protocols, as a panel, a cell list and an evaluate function each. |
+| `experiments/pipeline.py` | The whole study as a list of cells; runs whatever `results/` is missing. `scripts/run_all.sh` calls it. |
+| `experiments/report.py` | `results/*.csv` → `results/RESULTS.md` and the headline table below, labelled from columns. |
+| `experiments/elasticity_m5.py` | The M5 elasticity reference and each forecaster's estimate against it. |
+| `tests/` | `pytest`: every registered model on a confounded toy problem, the schema contract, reproducibility. About three minutes on CPU. |
 | `papers/fetch.sh` | Fetches and converts both papers. |
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-pytest                                   # three self-checks on CPU, ~2 minutes
-papers/fetch.sh                          # papers as PDF + markdown into papers/
-python experiments/run_synthetic.py --seeds 1 --periods 1 --epochs 4 --sharpness 10 --noise_mult 0.1   # ~1 minute
-scripts/run_all.sh                       # everything, then results/RESULTS.md and the table below
+pytest                                                                        # ~3 minutes on CPU
+papers/fetch.sh                                                               # papers as PDF + markdown
+python experiments/run_synthetic.py --setting calibrated --seeds 1 --periods 1 --epochs 4 --models dml,tf   # ~1 minute
+scripts/run_all.sh                                                            # the whole study, resumable
 ```
+
+Adding a model is one entry in `models/registry.py`; adding a dataset is a `Panel` plus a cell
+list and an evaluate function (see the two runners); adding a budget is a line in
+`experiments/pipeline.py`. Results carry their provenance as columns, so the report never
+decodes a filename and a rerun only computes cells that are missing.
 
 M5 data: the Kaggle competition download requires accepting the competition rules; the raw CSVs
 are also published as Kaggle datasets (this repo used `aryayadav0513/m5-forecasting-accuracy`).
@@ -61,7 +69,7 @@ dataset is a schema declaration rather than a code change:
 A Nixtla-style long frame (`unique_id`, `ds`, `y`) goes straight in:
 
 ```python
-from common import Panel, make_windows
+from schema import Panel, make_windows
 
 panel = Panel.from_long(
     df, id_col="unique_id", time_col="ds", target_col="y",
@@ -164,25 +172,31 @@ training periods and three seeds; M5 numbers are means over four forecast origin
 <!-- RESULTS -->
 |                                                                                 |   calibrated: off-policy MAE |   calibrated: on-policy MAE |   calibrated: effect MAE |   literal: off-policy MAE |   literal: on-policy MAE |   literal: effect MAE |   M5: MAE all |   M5: MAE price change |   M5: elasticity |
 |:--------------------------------------------------------------------------------|-----------------------------:|----------------------------:|-------------------------:|--------------------------:|-------------------------:|----------------------:|--------------:|-----------------------:|-----------------:|
-| dml (48 ep) — DML Forecaster (paper 1)                                          |                        17.30 |                       16.80 |                    21.60 |                      8.00 |                     7.50 |                 13.80 |          3.62 |                   6.84 |            -0.15 |
-| dml-nocf (48 ep) — DML, no cross-fitting                                        |                        21.30 |                       21.60 |                    21.80 |                      8.50 |                     8.20 |                  8.80 |          3.61 |                   6.80 |            -0.11 |
-| sdml (48 ep) — sDML (no treatment model)                                        |                        19.40 |                       16.50 |                    44.50 |                     13.20 |                     8.30 |                 47.90 |          3.62 |                   6.87 |            -0.03 |
-| tf (24 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        16.80 |                       16.60 |                    20.20 |                      8.90 |                     8.20 |                 14.80 |          3.61 |                   6.75 |            -0.09 |
-| tf (48 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        18.20 |                       17.80 |                    19.50 |                     10.50 |                     9.70 |                 13.50 |          3.61 |                   6.75 |            -0.09 |
-| mdl (24 ep) — Monotonic-demand transformer (paper 2)                            |                        30.20 |                       29.10 |                    18.00 |                     11.30 |                     9.90 |                 20.00 |          3.75 |                   6.56 |            -0.69 |
-| mdl (48 ep) — Monotonic-demand transformer (paper 2)                            |                        31.90 |                       31.60 |                    14.60 |                     14.30 |                    13.40 |                 18.40 |          3.75 |                   6.56 |            -0.69 |
-| mdl-anchored (24 ep) — paper 2 model anchored to recent demand level (ablation) |                        17.70 |                       18.10 |                    17.80 |                      8.40 |                     7.40 |                 14.60 |          3.76 |                   6.55 |            -0.80 |
-| mdl-anchored (48 ep) — paper 2 model anchored to recent demand level (ablation) |                        19.80 |                       20.70 |                    17.50 |                      8.20 |                     7.40 |                 13.70 |          3.76 |                   6.55 |            -0.80 |
-| lgbm — direct multi-horizon LightGBM (S-learner, paper 2 baseline)              |                        24.50 |                       19.50 |                    39.10 |                      8.10 |                     6.20 |                 18.60 |          3.61 |                   5.10 |            -2.93 |
+| dml (48 ep) — DML Forecaster (paper 1)                                          |                        17.30 |                       16.80 |                    21.60 |                      8.00 |                     7.50 |                 13.80 |        nan    |                 nan    |           nan    |
+| dml (12 ep) — DML Forecaster (paper 1)                                          |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.59 |                   6.74 |            -0.10 |
+| dml (4 ep) — DML Forecaster (paper 1)                                           |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.62 |                   6.84 |            -0.15 |
 | dml-lgbm — DML layout, direct multi-horizon LightGBM nuisances                  |                        19.10 |                       18.10 |                    18.20 |                      7.00 |                     6.50 |                  9.80 |          3.62 |                   7.13 |            -0.42 |
 | dml-lgbm-ar — DML layout, autoregressive LightGBM nuisances                     |                        23.80 |                       19.80 |                    32.90 |                     14.30 |                     9.60 |                 37.50 |          3.66 |                   6.69 |            -0.23 |
+| dml-nocf (48 ep) — DML, no cross-fitting                                        |                        21.30 |                       21.60 |                    21.80 |                      8.50 |                     8.20 |                  8.80 |        nan    |                 nan    |           nan    |
+| dml-nocf (12 ep) — DML, no cross-fitting                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.71 |            -0.09 |
+| dml-nocf (4 ep) — DML, no cross-fitting                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.61 |                   6.80 |            -0.11 |
 | last4 — naive: mean of last 4 weeks                                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.84 |                   7.62 |           nan    |
-| dml (12 ep) — dml (12 ep)                                                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.59 |                   6.74 |            -0.10 |
-| dml-nocf (12 ep) — dml-nocf (12 ep)                                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.71 |            -0.09 |
-| mdl (12 ep) — mdl (12 ep)                                                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.88 |                   6.47 |            -0.37 |
-| mdl-anchored (12 ep) — mdl-anchored (12 ep)                                     |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.84 |                   6.13 |            -0.77 |
-| sdml (12 ep) — sdml (12 ep)                                                     |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.76 |            -0.00 |
-| tf (12 ep) — tf (12 ep)                                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.68 |            -0.23 |
+| lgbm — direct multi-horizon LightGBM (S-learner, paper 2 baseline)              |                        24.50 |                       19.50 |                    39.10 |                      8.10 |                     6.20 |                 18.60 |          3.61 |                   5.10 |            -2.93 |
+| mdl (24 ep) — Monotonic-demand transformer (paper 2)                            |                        30.20 |                       29.10 |                    18.00 |                     11.30 |                     9.90 |                 20.00 |        nan    |                 nan    |           nan    |
+| mdl (48 ep) — Monotonic-demand transformer (paper 2)                            |                        31.90 |                       31.60 |                    14.60 |                     14.30 |                    13.40 |                 18.40 |        nan    |                 nan    |           nan    |
+| mdl (12 ep) — Monotonic-demand transformer (paper 2)                            |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.88 |                   6.47 |            -0.37 |
+| mdl (4 ep) — Monotonic-demand transformer (paper 2)                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.75 |                   6.56 |            -0.69 |
+| mdl-anchored (24 ep) — paper 2 model anchored to recent demand level (ablation) |                        17.70 |                       18.10 |                    17.80 |                      8.40 |                     7.40 |                 14.60 |        nan    |                 nan    |           nan    |
+| mdl-anchored (48 ep) — paper 2 model anchored to recent demand level (ablation) |                        19.80 |                       20.70 |                    17.50 |                      8.20 |                     7.40 |                 13.70 |        nan    |                 nan    |           nan    |
+| mdl-anchored (12 ep) — paper 2 model anchored to recent demand level (ablation) |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.84 |                   6.13 |            -0.77 |
+| mdl-anchored (4 ep) — paper 2 model anchored to recent demand level (ablation)  |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.76 |                   6.55 |            -0.80 |
+| sdml (48 ep) — sDML (no treatment model)                                        |                        19.40 |                       16.50 |                    44.50 |                     13.20 |                     8.30 |                 47.90 |        nan    |                 nan    |           nan    |
+| sdml (12 ep) — sDML (no treatment model)                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.76 |            -0.00 |
+| sdml (4 ep) — sDML (no treatment model)                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.62 |                   6.87 |            -0.03 |
+| tf (24 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        16.80 |                       16.60 |                    20.20 |                      8.90 |                     8.20 |                 14.80 |        nan    |                 nan    |           nan    |
+| tf (48 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        18.20 |                       17.80 |                    19.50 |                     10.50 |                     9.70 |                 13.50 |        nan    |                 nan    |           nan    |
+| tf (12 ep) — TF, linear head S-learner (paper 1 ablation)                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.68 |            -0.23 |
+| tf (4 ep) — TF, linear head S-learner (paper 1 ablation)                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.61 |                   6.75 |            -0.09 |
 <!-- /RESULTS -->
 
 How to read it, benchmark by benchmark:

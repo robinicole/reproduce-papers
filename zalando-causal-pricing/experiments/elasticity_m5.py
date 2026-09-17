@@ -10,7 +10,6 @@ script produces two pieces of evidence:
 
 usage: python experiments/elasticity_m5.py
 """
-import glob
 import sys
 from pathlib import Path
 
@@ -69,9 +68,11 @@ def main():
     print(ref.to_string(index=False))
 
     # forecasters' implied elasticities against their accuracy where price moved
-    fs = sorted(glob.glob(str(ROOT / "results" / "results_m5*.csv")))
-    if fs:
-        df = pd.concat([pd.read_csv(f) for f in fs])
+    f = ROOT / "results" / "m5.csv"
+    if f.exists():
+        from registry import label
+        df = pd.read_csv(f)
+        df["model"] = [label(m, e) for m, e in zip(df["model"], df["epochs"])]
         a = df[df["slice"] == "all"].groupby("model")["mean_psi"].mean()
         pc = df[df["slice"] == "price_change"].groupby("model")[["MAE", "demand_err"]].mean()
         out = pc.join(a.rename("elasticity")).dropna(subset=["elasticity"]).sort_values("MAE")

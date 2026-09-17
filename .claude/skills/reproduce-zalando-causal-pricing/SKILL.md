@@ -71,27 +71,25 @@ Done when: it prints `q shape: (30490, 277)`, share of cells available ≈ 0.79,
 cd $ROOT && python3 -m pytest -q
 ```
 
-Done when: three tests pass. They run each module's self-check on CPU: `data/synthetic.py`
-reports 4467 items; `models/dml.py` an effect MAE below half the mean effect (≈10 vs 39 when
-built); `models/mdl.py` monotonicity holding and an effect MAE below 0.8 of the mean effect (it is
-attenuated on purpose: the model is an S-learner on confounded toy data).
+Done when: all tests pass (about three minutes on CPU). They fit every registered model on a
+confounded toy problem and check what each design implies: DML recovers the effect, sDML loses it,
+the monotone head is monotone, the DML layout beats the same trees used naively, PPML recovers a
+known elasticity, and a run with the same seed reproduces exactly.
 Gotcha: the checks train on ~5600 windows; with the default batch of 1024 they need the epoch
 counts written in the files (20 for DML), fewer looks degenerate (effect MAE ≈ mean effect).
 
 ## 5. Full pipeline
 
 ```bash
-cd $ROOT && mkdir -p results && rm -f results/*_done.txt && nohup scripts/run_all.sh > results/logs_pipeline.txt 2>&1 &
-nohup scripts/run_extra.sh > results/logs_extra_pipeline.txt 2>&1 &     # waits for run_all, adds the anchored paper-2 ablation, rebuilds the report
+cd $ROOT && mkdir -p results && nohup scripts/run_all.sh > results/logs_pipeline.txt 2>&1 &
 ```
 
-`scripts/run_all.sh` runs the calibrated synthetic setting (policy sharpness 10, multiplicative noise
-0.1), the literal setting (appendix rule, no noise), each with all models at 48 epochs plus `tf`
-and `mdl` at 24, then M5, then `report.py`. About two hours on a free GPU. Progress: each finished
-fit is one `{...}` line in `results/logs_synthetic_*.txt`; each finished M5 model is a
-`done <model>` line in `results/logs_m5.txt`. A crash leaves a `Traceback` in the log and no
-`results/pipeline_done.txt`; `run_synthetic.py --resume` skips finished (period, seed, model)
-rows, so fix and relaunch `scripts/run_all.sh` without losing work.
+`scripts/run_all.sh` runs `experiments/pipeline.py`: both synthetic settings with every model at 48
+epochs and the transformers also at 24, then M5 with the transformers at 4 and 12 epochs and the
+tree models at a 12000-tree cap, then the report. A few hours on a free GPU. Every finished cell is
+a row in `results/synthetic.csv` or `results/m5.csv`, and the pipeline skips cells already there,
+so a crash (a `Traceback` in `results/logs_pipeline.txt`) is fixed and relaunched without losing
+work. LightGBM tree counts are logged per fit; a count at the cap means a truncated model.
 
 Why these settings (the code does not say): the appendix pricing rule alone yields almost no
 contemporaneous confounding and on-policy errors half the paper's, so every model identifies the
@@ -100,8 +98,8 @@ correlation and the error magnitude to the paper's. Nuisance models need the 48 
 the residual-on-residual slope is attenuated by a fifth and the effect model drifts further from
 truth the longer it trains.
 
-Done when: `results/final_done.txt` exists and `results/RESULTS.md` has a headline table with rows for `dml`,
-`dml-nocf`, `sdml`, `tf`, `mdl`, `mdl-anchored`, `last4` and no `nan` in the synthetic columns.
+Done when: `pipeline.py` exits cleanly and `results/RESULTS.md` has a headline table with a row for
+every model in `models/registry.py` plus `last4`, and no `nan` in the synthetic columns.
 
 ## 6. Verify the result pattern
 

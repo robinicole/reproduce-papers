@@ -1,5 +1,5 @@
 """Zalando's production demand model (arXiv:2305.14406, Kunz et al.): encoder/decoder transformer with a
-Monotonic Demand Layer.  This is the 'TF' model that arXiv:2312.15282v2 uses as its baseline.
+Monotonic Demand Layer. This is the 'TF' model that arXiv:2312.15282v2 uses as its baseline.
 
   encoder  <- past (demand, discount, covariates);  decoder <- future covariates + last observed (d_t, q_t)
   future discount bypasses encoder/decoder and enters the head only:
@@ -7,15 +7,21 @@ Monotonic Demand Layer.  This is the 'TF' model that arXiv:2312.15282v2 uses as 
   PL is piecewise linear on segments of width 0.1 with slopes delta = softplus(phi0(encoder state)) >= 0,
   sigma = softplus(phi1(decoder state)), so demand is monotonically increasing in discount by construction.
   loss = (v(pred) - v(log1p q))^2 with v(x) = 1 + x + x^2/2 + x^3/6  (eq. loss).
+anchor=True adds log(mean recent demand) to the output (local scaling, not in the paper): the network then
+predicts a ratio to the recent level, which is what keeps it from extrapolating a drifting covariate.
 Near/far-future split (5 vs 20 weeks) is not implemented: our horizons are <= 5 weeks (near future only).
 """
+import logging
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from common import DEV, predict, train
+from heads import implied_effect
+from nn import DEV, predict, train
 
+log = logging.getLogger(__name__)
 SEG = 0.1  # discount segment width
 
 
@@ -63,58 +69,27 @@ def v(x):  # third-order Taylor expansion of exp
 
 
 class MDLForecaster:
-    """Same interface as dml.Forecaster: fit(W, n_cat), predict(W) -> (demand (N,H), effect (N,))."""
+    """fit(W) / predict(W) -> (demand (N,H), effect (N,)); the effect is read off the monotone head
+    by finite differences since the model has no explicit elasticity parameter."""
 
-    def __init__(self, head="mult", epochs=10, lr=1e-3, seed=0, net=None, log=print, anchor=False, **_):
-        """anchor=True adds log(mean recent demand) to the log-demand output (local scaling, not in the paper):
-        the network then predicts a ratio to the recent level instead of an absolute level."""
-        self.head, self.epochs, self.lr, self.seed, self.log, self.net = head, epochs, lr, seed, log, net or {}
-        self.anchor = anchor
+    def __init__(self, n_cat, head="mult", epochs=10, lr=1e-3, seed=0, net=None, anchor=False):
+        self.n_cat, self.head, self.epochs, self.lr, self.seed, self.net, self.anchor = n_cat, head, epochs, lr, seed, net or {}, anchor
 
-    def fit(self, W, n_cat):
-        self.model = MDLNet(W.past.shape[-1], W.fut.shape[-1], n_cat, W.static_num.shape[-1],
+    def fit(self, W):
+        torch.manual_seed(self.seed)
+        self.model = MDLNet(W.past.shape[-1], W.fut.shape[-1], self.n_cat, W.static_num.shape[-1],
                             W.past.shape[1], W.fut.shape[1], **self.net).to(DEV)
-
         if self.anchor:
             fwd = self.model.forward
             self.model.forward = lambda b, d: fwd(b, d) + torch.log(b["scale"])[:, None]
-
-        def step(m, b):
-            return ((v(m(b, b["d_fut"])) - v(torch.log1p(b["y"]))) ** 2).mean()
-        self.log("MDL: encoder/decoder + monotonic demand layer")
-        train(self.model, W, step, self.epochs, self.lr, seed=self.seed, log=self.log)
+        step = lambda m, b: ((v(m(b, b["d_fut"])) - v(torch.log1p(b["y"]))) ** 2).mean()
+        log.info("MDL: encoder/decoder + monotonic demand layer%s", " (anchored)" if self.anchor else "")
+        train(self.model, W, step, self.epochs, self.lr, seed=self.seed)
         return self
 
     def _demand(self, W, d=None):
-        return predict(self.model, W, lambda m, b: torch.expm1(m(b, b["d_fut"] if d is None else torch.full_like(b["d_fut"], d))).clamp(min=0))
+        at = lambda b: b["d_fut"] if d is None else torch.full_like(b["d_fut"], d)
+        return predict(self.model, W, lambda m, b: torch.expm1(m(b, at(b))).clamp(min=0))
 
     def predict(self, W):
-        pred = self._demand(W)
-        if self.head == "add":   # dq/dd, finite difference over the off-policy range
-            eff = (self._demand(W, 0.5) - self._demand(W, 0.0)).mean(1) / 0.5
-        else:                    # price elasticity dlog q / dlog(1-d) near full price
-            q0, q1 = self._demand(W, 0.0) + 1e-3, self._demand(W, 0.1) + 1e-3
-            eff = (np.log(q1) - np.log(q0)).mean(1) / np.log(0.9)
-        return pred, eff
-
-
-if __name__ == "__main__":
-    from common import Panel, make_windows, week_feats
-    rng = np.random.default_rng(0)
-    n, T, C, H = 400, 40, 10, 3
-    season = np.sin(2 * np.pi * np.arange(T) / 20)[None, :]
-    base = rng.uniform(20, 60, (n, 1)) * (1 + 0.5 * season)
-    d = np.clip(0.3 - 0.25 * season + rng.normal(0, 0.05, (n, T)), 0, 0.5)
-    eff = rng.uniform(20, 60, n)
-    q = base + eff[:, None] * d + rng.normal(0, 2, (n, T))
-    P = Panel(y=q.astype(np.float32), treatment=d.astype(np.float32),
-              futr=np.broadcast_to(week_feats(np.arange(T), 20), (n, T, 3)))
-    mk = lambda o: make_windows(P, o, C, H)
-    m = MDLForecaster("add", epochs=8, log=lambda s: None).fit(mk(range(C - 1, T - H, 2)), [1])
-    Wt = mk([T - H - 1])
-    pred, e = m.predict(Wt)
-    lo, hi = m._demand(Wt, 0.0), m._demand(Wt, 0.5)
-    assert (hi >= lo - 1e-4).all(), "monotonicity violated"
-    err = np.abs(e - eff[Wt.item]).mean()
-    print("on-policy MAE %.2f, effect MAE %.1f (mean effect %.1f)" % (np.abs(pred - Wt.y).mean(), err, eff.mean()))
-    assert err < 0.8 * eff.mean(), err  # attenuated under confounding by design (this is paper 1's point), but not degenerate
+        return self._demand(W), implied_effect(self.head, lambda d: self._demand(W, d))

@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "models"))
 
-from common import Panel, make_windows
+from schema import Panel, make_windows
 
 C, H, N, T = 4, 2, 6, 12
 

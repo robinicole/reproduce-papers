@@ -1,145 +1,140 @@
-"""DML Forecaster (arXiv:2312.15282v2) plus the TF / sDML baselines from the paper.
+"""Paper 1's DML Forecaster (arXiv:2312.15282v2) as one procedure over pluggable learners.
 
-Three sub-models, all the same small transformer:
-  outcome   q~ = f(z)   (softplus, scaled by past demand)   -- never sees future discount
-  treatment d~ = m(z)   (linear)                             -- never sees future discount
-  effect    psi(z)      (pooled scalar)
-Heads:
-  'mult' (real data):  q^ = q~ * ((1-d)/(1-d~))^psi,  psi = -softplus   (eq. effecthead)
-  'add'  (synthetic):  q^ = q~ + psi * (d - d~),      psi =  softplus   (eq. simeffecthead)
-Two-fold cross-fitting on item parity; inference averages the cross-fit and the
-own-fold prediction (geometric mean for 'mult', arithmetic for 'add').
+    DML(head, nuisance, effect, cross_fit)
+      nuisance(fold) -> learner with fit(W_fold) and predict(W) -> (q~, d~)
+      effect()       -> learner with fit(W, q~, d~) and predict(W) -> psi
+    fit:     nuisances on two item-parity folds, cross-fitted residuals, one effect model
+    predict: demand head on the cross-fit and own-fold nuisance paths, ensembled (paper 1 eq. ensemble)
+
+Ablations are constructor arguments rather than model kinds: cross_fit=False is "DML no cf", a
+nuisance learner with treatment_model=False is sDML. The torch learners below are the paper's
+transformers; models/lgbm.py provides tree-based ones. TFForecaster is the paper's naive baseline.
 """
+import logging
+
 import numpy as np
 import torch
 import torch.nn as nn
 
-from common import DEV, Panel, SeqNet, Windows, head, loss_fn, make_windows, outcome_act, predict, train, week_feats
+from heads import activate_psi, demand, ensemble
+from nn import loss_fn, outcome_act, predict, seqnet, train
 
-# ----------------------------------------------------------------------------- forecasters
-class Forecaster:
-    """kind in {'dml', 'dml-nocf', 'sdml', 'tf'}; head in {'mult', 'add'}."""
+log = logging.getLogger(__name__)
 
-    def __init__(self, kind="dml", head="mult", nuisance_loss="l1", epochs=10, effect_epochs=10, lr=1e-3,
-                 seed=0, net=None, log=print):
-        self.kind, self.head, self.nloss = kind, head, loss_fn(nuisance_loss)
-        self.epochs, self.effect_epochs, self.lr, self.seed, self.log = epochs, effect_epochs, lr, seed, log
-        self.net = net or {}
 
-    def _new(self, W, out, extra_fut=0):
-        return SeqNet(W.past.shape[-1], W.fut.shape[-1] + extra_fut, self.n_cat, W.static_num.shape[-1],
-                      W.past.shape[1], W.fut.shape[1], out, **self.net).to(DEV)
-
-    def _tf_forward(self, b):
-        """Naive S-learner: future discount is a plain input feature (eq. current_estimand); head adds psi*d."""
-        b = dict(b, fut=torch.cat([b["fut"], b["d_fut"][..., None]], -1))
-        qt = outcome_act(self.q_net(b), b["scale"])
-        return head(self.head, qt, torch.zeros_like(b["d_fut"]), b["d_fut"], self.psi_net(b), b["scale"])
-
-    # nuisance steps
-    def _q_step(self, m, b):
-        return self.nloss(outcome_act(m(b), b["scale"]), b["y"])
-
-    def _d_step(self, m, b):
-        return self.nloss(m(b), b["d_fut"])
-
-    def _q_pred(self, m, b):
-        return outcome_act(m(b), b["scale"])
-
-    def fit(self, W, n_cat):
-        self.n_cat = n_cat
-        L = self.log
-        if self.kind == "tf":
-            self.q_net, self.psi_net = self._new(W, "seq", extra_fut=1), self._new(W, "scalar", extra_fut=1)
-            both = nn.ModuleList([self.q_net, self.psi_net])
-
-            def step(_, b):
-                pred, _ = self._tf_forward(b)
-                return self.nloss(pred, b["y"])
-            L("TF: end-to-end"); train(both, W, step, self.epochs, self.lr, seed=self.seed, log=L)
-            return self
-
-        # folds: cross-fitting on item parity, or a single fold for -nocf
-        self.n_folds = 1 if self.kind == "dml-nocf" else 2
-        self.q_nets, self.d_nets = [], []
-        for k, mask in enumerate(self._folds(W)):
-            Wk = W.subset(np.where(mask)[0])
-            L(f"outcome model fold {k}"); self.q_nets.append(train(self._new(W, "seq"), Wk, self._q_step, self.epochs, self.lr, seed=self.seed + k, log=L))
-            if self.kind != "sdml":
-                L(f"treatment model fold {k}"); self.d_nets.append(train(self._new(W, "seq"), Wk, self._d_step, self.epochs, self.lr, seed=self.seed + 10 + k, log=L))
-
-        return self.fit_effect(W)
-
-    def fit_effect(self, W, loss="l1", epochs=None):
-        """Stage 2: cross-fitted nuisance predictions -> single effect model psi(z)."""
-        q_t, d_t = self._nuisance(W, cross=True)
-        self.psi_net = self._new(W, "scalar")
-        q_t_t, d_t_t = torch.as_tensor(q_t, device=DEV), torch.as_tensor(d_t, device=DEV)
-
-        class Wp(Windows):  # windows carrying their nuisance predictions
-            def tensors(s, idx):
-                b = super().tensors(idx)
-                b["q_t"], b["d_t"] = q_t_t[idx], d_t_t[idx]
-                return b
-        Wpp = Wp(W.past, W.fut, W.d_fut, W.y, W.static_cat, W.static_num, W.scale, W.item)
-        lf = loss_fn(loss)
-
-        def step(m, b):
-            pred, _ = head(self.head, b["q_t"], b["d_t"], b["d_fut"], m(b), b["scale"])
-            return lf(pred, b["y"])
-        self.log("effect model"); train(self.psi_net, Wpp, step, epochs or self.effect_epochs, self.lr, seed=self.seed + 20, log=self.log)
-        return self
+class DML:
+    def __init__(self, head, nuisance, effect, cross_fit=True):
+        self.head, self.make_nuisance, self.make_effect, self.cross_fit = head, nuisance, effect, cross_fit
 
     def _folds(self, W):
-        return [np.ones(len(W), bool)] if self.n_folds == 1 else [W.item % 2 == 0, W.item % 2 == 1]
+        return [W.item % 2 == 0, W.item % 2 == 1] if self.cross_fit else [np.ones(len(W), bool)]
+
+    def fit(self, W):
+        self.nuisances = []
+        for k, mask in enumerate(self._folds(W)):
+            log.info("nuisance fold %d", k)
+            self.nuisances.append(self.make_nuisance(k).fit(W.subset(np.where(mask)[0])))
+        q_t, d_t = self._nuisance(W, cross=True)  # with one fold this is the in-sample path
+        log.info("effect model")
+        self.effect = self.make_effect().fit(W, q_t, d_t)
+        return self
 
     def _nuisance(self, W, cross):
-        """Outcome/treatment predictions. cross=True: even items <- odd-trained nets (cross-fitting)."""
+        """Nuisance predictions for W. cross=True routes each fold through the nuisances that did
+        not train on it; that is what the effect model learns from and the 'cf' path at inference."""
         q_t, d_t = np.zeros_like(W.y), np.zeros_like(W.d_fut)
-        for k, mask in enumerate(self._folds(W)):
-            j = (self.n_folds - 1 - k) if cross else k
+        folds = self._folds(W)
+        for k, mask in enumerate(folds):
             idx = np.where(mask)[0]
-            Wk = W.subset(idx)
-            q_t[idx] = predict(self.q_nets[j], Wk, self._q_pred)
-            if self.d_nets:
-                d_t[idx] = predict(self.d_nets[j], Wk, lambda m, b: m(b))
+            if len(idx) == 0:
+                continue
+            j = (len(folds) - 1 - k) if cross else k
+            q_t[idx], d_t[idx] = self.nuisances[j].predict(W.subset(idx))
         return q_t, d_t
 
     def predict(self, W):
-        """Returns (demand forecast (N,H), effect psi (N,))."""
-        if self.kind == "tf":
-            pred = predict(self.q_net, W, lambda m, b: self._tf_forward(b)[0])
-            psi = predict(self.psi_net, W, lambda m, b: self._tf_forward(b)[1])
-            return pred, psi
-        d, scale = torch.as_tensor(W.d_fut, device=DEV), torch.as_tensor(W.scale, device=DEV)
-        psi_raw = torch.as_tensor(predict(self.psi_net, W, lambda m, b: m(b)), device=DEV)
-        preds = []
-        for cross in ([False] if self.kind == "dml-nocf" else [True, False]):
-            q_t, d_t = self._nuisance(W, cross)
-            p, psi = head(self.head, torch.as_tensor(q_t, device=DEV), torch.as_tensor(d_t, device=DEV), d, psi_raw, scale)
-            preds.append(p)
-        if self.head == "mult":  # geometric mean (eq. ensemble)
-            out = torch.exp(sum(torch.log(p.clamp(min=1e-6)) for p in preds) / len(preds))
-        else:
-            out = sum(preds) / len(preds)
-        return out.cpu().numpy(), psi.cpu().numpy()
+        """(demand forecast (N, H), effect psi (N,))"""
+        psi = self.effect.predict(W)
+        paths = [True, False] if self.cross_fit else [False]
+        preds = [demand(self.head, *self._nuisance(W, c), W.d_fut, psi) for c in paths]
+        return np.clip(ensemble(self.head, preds), 0, None), psi
 
 
-if __name__ == "__main__":
-    # self-check: linear-in-discount toy data with a confounded policy; DML must recover the effect
-    rng = np.random.default_rng(0)
-    n, T, C, H = 400, 40, 10, 3
-    season = np.sin(2 * np.pi * np.arange(T) / 20)[None, :]
-    base = rng.uniform(20, 60, (n, 1)) * (1 + 0.5 * season)
-    d = np.clip(0.3 - 0.25 * season + rng.normal(0, 0.05, (n, T)), 0, 0.5)  # discount high when base low
-    eff = rng.uniform(20, 60, n)
-    q = base + eff[:, None] * d + rng.normal(0, 2, (n, T))
-    P = Panel(y=q.astype(np.float32), treatment=d.astype(np.float32),
-              futr=np.broadcast_to(week_feats(np.arange(T), 20), (n, T, 3)))
-    W = make_windows(P, range(C - 1, T - H, 2), C, H)
-    m = Forecaster("dml", "add", "l2", epochs=20, effect_epochs=20, log=lambda s: None).fit(W, [1])
-    Wt = make_windows(P, [T - H - 1], C, H)
-    _, psi = m.predict(Wt)
-    err = np.abs(psi - eff[Wt.item]).mean()
-    print("effect MAE", err, "(mean effect", eff.mean(), ")")
-    assert err < 0.5 * eff.mean(), err
+# ----------------------------------------------------------------------------- torch learners
+class TorchNuisance:
+    """Outcome and treatment transformers for one fold. Neither sees the horizon discount."""
+
+    def __init__(self, n_cat, head, loss, epochs, lr, seed, net=None, treatment_model=True, fold=0):
+        self.n_cat, self.loss, self.epochs, self.lr = n_cat, loss_fn(loss), epochs, lr
+        self.seed, self.net, self.treatment_model, self.fold = seed, net or {}, treatment_model, fold
+
+    _q = staticmethod(lambda m, b: outcome_act(m(b), b["scale"]))
+
+    def fit(self, W):
+        L = self.loss
+        torch.manual_seed(self.seed + self.fold)  # construction seeded too, so runs reproduce exactly
+        self.q_net = train(seqnet(W, self.n_cat, "seq", **self.net), W, lambda m, b: L(self._q(m, b), b["y"]),
+                           self.epochs, self.lr, seed=self.seed + self.fold)
+        self.d_net = None
+        if self.treatment_model:
+            torch.manual_seed(self.seed + 10 + self.fold)
+            self.d_net = train(seqnet(W, self.n_cat, "seq", **self.net), W, lambda m, b: L(m(b), b["d_fut"]),
+                               self.epochs, self.lr, seed=self.seed + 10 + self.fold)
+        return self
+
+    def predict(self, W):
+        q_t = predict(self.q_net, W, self._q)
+        d_t = predict(self.d_net, W, lambda m, b: m(b)) if self.d_net is not None else np.zeros_like(W.d_fut)
+        return q_t, d_t
+
+
+class TorchEffect:
+    """One elasticity per window from a transformer, trained through the demand head on the
+    cross-fitted nuisance predictions (L1 loss, as in the paper)."""
+
+    def __init__(self, n_cat, head, epochs, lr, seed, net=None, loss="l1"):
+        self.n_cat, self.head, self.epochs, self.lr, self.seed, self.net = n_cat, head, epochs, lr, seed, net or {}
+        self.loss = loss_fn(loss)
+
+    def _psi(self, m, b):
+        return activate_psi(self.head, m(b), b["scale"])
+
+    def fit(self, W, q_t, d_t):
+        Wx = W.subset(slice(None))
+        Wx.extras = {"q_t": q_t, "d_t": d_t}
+        step = lambda m, b: self.loss(demand(self.head, b["q_t"], b["d_t"], b["d_fut"], self._psi(m, b)), b["y"])
+        torch.manual_seed(self.seed + 20)
+        self.net_ = train(seqnet(W, self.n_cat, "scalar", **self.net), Wx, step, self.epochs, self.lr, seed=self.seed + 20)
+        return self
+
+    def predict(self, W):
+        return predict(self.net_, W, self._psi)
+
+
+class TFForecaster:
+    """Paper 1's naive baseline: the future discount is an ordinary network input (an S-learner)
+    and the head adds psi * d on top with d~ = 0."""
+
+    def __init__(self, n_cat, head, loss, epochs, lr, seed, net=None):
+        self.n_cat, self.head, self.loss, self.epochs, self.lr, self.seed = n_cat, head, loss_fn(loss), epochs, lr, seed
+        self.net = net or {}
+
+    def _forward(self, b):
+        b = dict(b, fut=torch.cat([b["fut"], b["d_fut"][..., None]], -1))
+        qt = outcome_act(self.q_net(b), b["scale"])
+        psi = activate_psi(self.head, self.psi_net(b), b["scale"])
+        return demand(self.head, qt, torch.zeros_like(b["d_fut"]), b["d_fut"], psi), psi
+
+    def fit(self, W):
+        torch.manual_seed(self.seed)
+        self.q_net = seqnet(W, self.n_cat, "seq", extra_fut=1, **self.net)
+        self.psi_net = seqnet(W, self.n_cat, "scalar", extra_fut=1, **self.net)
+        log.info("TF: end-to-end")
+        train(nn.ModuleList([self.q_net, self.psi_net]), W, lambda _, b: self.loss(self._forward(b)[0], b["y"]),
+              self.epochs, self.lr, seed=self.seed)
+        return self
+
+    def predict(self, W):
+        pred = predict(self.q_net, W, lambda m, b: self._forward(b)[0])
+        psi = predict(self.psi_net, W, lambda m, b: self._forward(b)[1])
+        return pred, psi
