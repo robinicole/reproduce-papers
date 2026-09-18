@@ -170,33 +170,42 @@ error; synthetic numbers are means over four
 training periods and three seeds; M5 numbers are means over four forecast origins).
 
 <!-- RESULTS -->
-|                                                                                 |   calibrated: off-policy MAE |   calibrated: on-policy MAE |   calibrated: effect MAE |   literal: off-policy MAE |   literal: on-policy MAE |   literal: effect MAE |   M5: MAE all |   M5: MAE price change |   M5: elasticity |
-|:--------------------------------------------------------------------------------|-----------------------------:|----------------------------:|-------------------------:|--------------------------:|-------------------------:|----------------------:|--------------:|-----------------------:|-----------------:|
-| dml (48 ep) — DML Forecaster (paper 1)                                          |                        17.30 |                       16.80 |                    21.60 |                      8.00 |                     7.50 |                 13.80 |        nan    |                 nan    |           nan    |
-| dml (12 ep) — DML Forecaster (paper 1)                                          |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.59 |                   6.74 |            -0.10 |
-| dml (4 ep) — DML Forecaster (paper 1)                                           |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.62 |                   6.84 |            -0.15 |
-| dml-lgbm — DML layout, direct multi-horizon LightGBM nuisances                  |                        19.10 |                       18.10 |                    18.20 |                      7.00 |                     6.50 |                  9.80 |          3.62 |                   7.13 |            -0.42 |
-| dml-lgbm-ar — DML layout, autoregressive LightGBM nuisances                     |                        23.80 |                       19.80 |                    32.90 |                     14.30 |                     9.60 |                 37.50 |          3.66 |                   6.69 |            -0.23 |
-| dml-nocf (48 ep) — DML, no cross-fitting                                        |                        21.30 |                       21.60 |                    21.80 |                      8.50 |                     8.20 |                  8.80 |        nan    |                 nan    |           nan    |
-| dml-nocf (12 ep) — DML, no cross-fitting                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.71 |            -0.09 |
-| dml-nocf (4 ep) — DML, no cross-fitting                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.61 |                   6.80 |            -0.11 |
-| last4 — naive: mean of last 4 weeks                                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.84 |                   7.62 |           nan    |
-| lgbm — direct multi-horizon LightGBM (S-learner, paper 2 baseline)              |                        24.50 |                       19.50 |                    39.10 |                      8.10 |                     6.20 |                 18.60 |          3.61 |                   5.10 |            -2.93 |
-| mdl (24 ep) — Monotonic-demand transformer (paper 2)                            |                        30.20 |                       29.10 |                    18.00 |                     11.30 |                     9.90 |                 20.00 |        nan    |                 nan    |           nan    |
-| mdl (48 ep) — Monotonic-demand transformer (paper 2)                            |                        31.90 |                       31.60 |                    14.60 |                     14.30 |                    13.40 |                 18.40 |        nan    |                 nan    |           nan    |
-| mdl (12 ep) — Monotonic-demand transformer (paper 2)                            |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.88 |                   6.47 |            -0.37 |
-| mdl (4 ep) — Monotonic-demand transformer (paper 2)                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.75 |                   6.56 |            -0.69 |
-| mdl-anchored (24 ep) — paper 2 model anchored to recent demand level (ablation) |                        17.70 |                       18.10 |                    17.80 |                      8.40 |                     7.40 |                 14.60 |        nan    |                 nan    |           nan    |
-| mdl-anchored (48 ep) — paper 2 model anchored to recent demand level (ablation) |                        19.80 |                       20.70 |                    17.50 |                      8.20 |                     7.40 |                 13.70 |        nan    |                 nan    |           nan    |
-| mdl-anchored (12 ep) — paper 2 model anchored to recent demand level (ablation) |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.84 |                   6.13 |            -0.77 |
-| mdl-anchored (4 ep) — paper 2 model anchored to recent demand level (ablation)  |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.76 |                   6.55 |            -0.80 |
-| sdml (48 ep) — sDML (no treatment model)                                        |                        19.40 |                       16.50 |                    44.50 |                     13.20 |                     8.30 |                 47.90 |        nan    |                 nan    |           nan    |
-| sdml (12 ep) — sDML (no treatment model)                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.76 |            -0.00 |
-| sdml (4 ep) — sDML (no treatment model)                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.62 |                   6.87 |            -0.03 |
-| tf (24 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        16.80 |                       16.60 |                    20.20 |                      8.90 |                     8.20 |                 14.80 |        nan    |                 nan    |           nan    |
-| tf (48 ep) — TF, linear head S-learner (paper 1 ablation)                       |                        18.20 |                       17.80 |                    19.50 |                     10.50 |                     9.70 |                 13.50 |        nan    |                 nan    |           nan    |
-| tf (12 ep) — TF, linear head S-learner (paper 1 ablation)                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.60 |                   6.68 |            -0.23 |
-| tf (4 ep) — TF, linear head S-learner (paper 1 ablation)                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |          3.61 |                   6.75 |            -0.09 |
+|                                                                                                 |   calibrated: off-policy MAE |   calibrated: on-policy MAE |   calibrated: effect MAE |   literal: off-policy MAE |   literal: on-policy MAE |   literal: effect MAE |   multi: off-policy MAE |   multi: on-policy MAE |   multi: effect MAE |   M5: MAE all |   M5: MAE price change |   M5: elasticity |
+|:------------------------------------------------------------------------------------------------|-----------------------------:|----------------------------:|-------------------------:|--------------------------:|-------------------------:|----------------------:|------------------------:|-----------------------:|--------------------:|--------------:|-----------------------:|-----------------:|
+| dml (48 ep) — DML Forecaster (paper 1)                                                          |                        17.30 |                       16.80 |                    21.60 |                      8.00 |                     7.50 |                 13.80 |                   81.60 |                  42.50 |                0.80 |        nan    |                 nan    |           nan    |
+| dml (48 ep) (discount only) — DML Forecaster (paper 1)                                          |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   62.10 |                  43.50 |                0.60 |        nan    |                 nan    |           nan    |
+| dml (12 ep) — DML Forecaster (paper 1)                                                          |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.59 |                   6.74 |            -0.10 |
+| dml (4 ep) — DML Forecaster (paper 1)                                                           |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.62 |                   6.84 |            -0.15 |
+| dml-lgbm — DML layout, direct multi-horizon LightGBM nuisances                                  |                        19.10 |                       18.10 |                    18.20 |                      7.00 |                     6.50 |                  9.80 |                   75.60 |                  38.10 |                0.40 |          3.62 |                   7.13 |            -0.42 |
+| dml-lgbm (discount only) — DML layout, direct multi-horizon LightGBM nuisances                  |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   52.10 |                  44.00 |                0.40 |        nan    |                 nan    |           nan    |
+| dml-lgbm-ar — DML layout, autoregressive LightGBM nuisances                                     |                        23.80 |                       19.80 |                    32.90 |                     14.30 |                     9.60 |                 37.50 |                   97.00 |                  36.90 |                0.60 |          3.66 |                   6.69 |            -0.23 |
+| dml-lgbm-ar (discount only) — DML layout, autoregressive LightGBM nuisances                     |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   67.30 |                  51.60 |                0.50 |        nan    |                 nan    |           nan    |
+| dml-nocf (48 ep) — DML, no cross-fitting                                                        |                        21.30 |                       21.60 |                    21.80 |                      8.50 |                     8.20 |                  8.80 |                   95.50 |                  45.30 |                1.10 |        nan    |                 nan    |           nan    |
+| dml-nocf (48 ep) (discount only) — DML, no cross-fitting                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   71.30 |                  44.50 |                0.80 |        nan    |                 nan    |           nan    |
+| dml-nocf (12 ep) — DML, no cross-fitting                                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.60 |                   6.71 |            -0.09 |
+| dml-nocf (4 ep) — DML, no cross-fitting                                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.61 |                   6.80 |            -0.11 |
+| last4 — naive: mean of last 4 weeks                                                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.84 |                   7.62 |           nan    |
+| lgbm — direct multi-horizon LightGBM (S-learner, paper 2 baseline)                              |                        24.50 |                       19.50 |                    39.10 |                      8.10 |                     6.20 |                 18.60 |                   96.60 |                  31.50 |                1.30 |          3.61 |                   5.10 |            -2.93 |
+| lgbm (discount only) — direct multi-horizon LightGBM (S-learner, paper 2 baseline)              |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   82.20 |                  37.60 |                1.20 |        nan    |                 nan    |           nan    |
+| mdl (24 ep) — Monotonic-demand transformer (paper 2)                                            |                        30.20 |                       29.10 |                    18.00 |                     11.30 |                     9.90 |                 20.00 |                  nan    |                 nan    |              nan    |        nan    |                 nan    |           nan    |
+| mdl (48 ep) — Monotonic-demand transformer (paper 2)                                            |                        31.90 |                       31.60 |                    14.60 |                     14.30 |                    13.40 |                 18.40 |                   59.50 |                  29.50 |                0.30 |        nan    |                 nan    |           nan    |
+| mdl (48 ep) (discount only) — Monotonic-demand transformer (paper 2)                            |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   45.80 |                  36.10 |                0.30 |        nan    |                 nan    |           nan    |
+| mdl (12 ep) — Monotonic-demand transformer (paper 2)                                            |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.88 |                   6.47 |            -0.37 |
+| mdl (4 ep) — Monotonic-demand transformer (paper 2)                                             |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.75 |                   6.56 |            -0.69 |
+| mdl-anchored (24 ep) — paper 2 model anchored to recent demand level (ablation)                 |                        17.70 |                       18.10 |                    17.80 |                      8.40 |                     7.40 |                 14.60 |                  nan    |                 nan    |              nan    |        nan    |                 nan    |           nan    |
+| mdl-anchored (48 ep) — paper 2 model anchored to recent demand level (ablation)                 |                        19.80 |                       20.70 |                    17.50 |                      8.20 |                     7.40 |                 13.70 |                   59.60 |                  27.90 |                0.40 |        nan    |                 nan    |           nan    |
+| mdl-anchored (48 ep) (discount only) — paper 2 model anchored to recent demand level (ablation) |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   44.90 |                  35.80 |                0.40 |        nan    |                 nan    |           nan    |
+| mdl-anchored (12 ep) — paper 2 model anchored to recent demand level (ablation)                 |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.84 |                   6.13 |            -0.77 |
+| mdl-anchored (4 ep) — paper 2 model anchored to recent demand level (ablation)                  |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.76 |                   6.55 |            -0.80 |
+| sdml (48 ep) — sDML (no treatment model)                                                        |                        19.40 |                       16.50 |                    44.50 |                     13.20 |                     8.30 |                 47.90 |                   85.20 |                  44.50 |                0.70 |        nan    |                 nan    |           nan    |
+| sdml (48 ep) (discount only) — sDML (no treatment model)                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  101.70 |                  46.60 |                1.60 |        nan    |                 nan    |           nan    |
+| sdml (12 ep) — sDML (no treatment model)                                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.60 |                   6.76 |            -0.00 |
+| sdml (4 ep) — sDML (no treatment model)                                                         |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.62 |                   6.87 |            -0.03 |
+| tf (24 ep) — TF, linear head S-learner (paper 1 ablation)                                       |                        16.80 |                       16.60 |                    20.20 |                      8.90 |                     8.20 |                 14.80 |                  nan    |                 nan    |              nan    |        nan    |                 nan    |           nan    |
+| tf (48 ep) — TF, linear head S-learner (paper 1 ablation)                                       |                        18.20 |                       17.80 |                    19.50 |                     10.50 |                     9.70 |                 13.50 |                   76.10 |                  30.80 |                1.00 |        nan    |                 nan    |           nan    |
+| tf (48 ep) (discount only) — TF, linear head S-learner (paper 1 ablation)                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                   63.80 |                  38.60 |                0.40 |        nan    |                 nan    |           nan    |
+| tf (12 ep) — TF, linear head S-learner (paper 1 ablation)                                       |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.60 |                   6.68 |            -0.23 |
+| tf (4 ep) — TF, linear head S-learner (paper 1 ablation)                                        |                       nan    |                      nan    |                   nan    |                    nan    |                   nan    |                nan    |                  nan    |                 nan    |              nan    |          3.61 |                   6.75 |            -0.09 |
 <!-- /RESULTS -->
 
 How to read it, benchmark by benchmark:
@@ -252,6 +261,107 @@ price variation to orthogonalize against. Neither failure is visible in forecast
 
 Caveat that binds every row: M5 publishes no promotion or display flags, so all of these estimates,
 the reference included, omit a variable known to move with price.
+
+## Three treatments at once: discount, list price, stock (branch `multi-treatment`)
+
+The papers intervene on one variable, the discount. A retailer also sets the list price and, through
+replenishment, the stock, and all three respond to demand. Treating one as the treatment and the
+others as covariates is not a smaller version of the same problem: the omitted ones are confounded
+by the same policy, so the discount effect absorbs part of theirs.
+
+**Design.** A `Panel` now carries a vector of treatments, each declared as `(name, kind, sign)`.
+The demand heads are partially linear in the treatments' effect-space coordinates: the discount
+enters as `log(1-d)` under the multiplicative head exactly as before, log price and log stock as
+they are, each with a sign-constrained activation. DML residualizes all three jointly and learns
+one effect vector per window, which is the textbook multi-treatment partially linear model. Trees
+do the effect stage by backfitting the weighted-regression trick over treatments. The S-learners
+and paper 2's model take the extra treatments as inputs and report finite-difference effects per
+treatment; paper 2's monotone head stays discount-only, since that is what the paper specifies.
+
+**Simulator.** `synthetic.generate_multi` keeps Appendix E's base demand and makes it log-linear
+in three treatments: a list price with elasticity ε, a discount with elasticity ε·(1+λ) where λ is
+a *promo premium* beyond the pure price effect, and an availability multiplier that falls once
+stock drops below a threshold. The discount follows the coverage rule, the list price moves with
+sell-through against plan, and stock jumps on replenishment when sales run ahead, so all three are
+confounded with demand and with each other (within-item correlations near ±0.5).
+
+**Hypothesis and protocol.** Two questions, each with ground truth: does the three-treatment model
+recover the promo premium (a discount coefficient larger in magnitude than the price coefficient)
+and the stock effect, each separately, while all three move? And how biased is a discount-only
+model on the same data, with the list price as a future exogenous and stock as a historical one?
+`run_synthetic.py --setting multi --treatments all|discount` reports on-policy error, off-policy
+error on a joint grid and one treatment at a time, and per-treatment effect error.
+
+<!-- MULTI-RESULTS -->
+**Results** (12 runs per cell: four periods, three seeds, 48 epochs; full tables in `results/RESULTS.md`).
+
+All three treatments declared:
+
+| Model | On-policy MAE | Joint off-policy MAE | Discount effect error | Price effect error | Stock effect error |
+|---|---|---|---|---|---|
+| Paper-2 monotone head | 29.5 | **59.5 ± 2.8** | **0.33** | 1.21 | **0.13** |
+| Paper-2, anchored | **27.9** | 59.6 | 0.41 | 1.19 | 0.13 |
+| DML with LightGBM | 38.1 | 75.7 | 0.38 | 1.94 | 0.15 |
+| Naive TF | 30.9 | 76.1 | 0.99 | 0.71 | 0.84 |
+| DML Forecaster | 42.5 | 81.6 ± 5.3 | 0.76 | 1.20 | 0.23 |
+| sDML | 44.5 | 85.2 | 0.74 | **0.56** | 0.18 |
+| DML, no cross-fitting | 45.3 | 95.5 | 1.11 | 1.11 | 0.15 |
+| LightGBM S-learner | 31.5 | 96.6 | 1.31 | 1.29 | 0.23 |
+| DML, autoregressive LightGBM | 36.9 | 97.0 | 0.58 | 2.30 | 0.16 |
+
+True magnitudes: discount coefficient about 2.1, price coefficient about 1.4, stock slope 0.5 below
+the availability threshold and 0 above it.
+
+The same models with the discount as the only treatment, the list price as a future exogenous and
+stock as a historical exogenous:
+
+| Model | Discount effect error, all three | Discount effect error, discount only | Discount off-policy MAE, all three | discount only |
+|---|---|---|---|---|
+| Paper-2 monotone head | 0.33 | 0.34 | 40.7 | 45.8 |
+| DML with LightGBM | 0.38 | 0.38 | 48.3 | 52.1 |
+| Naive TF | 0.99 | **0.39** | 67.3 | 63.8 |
+| DML Forecaster | 0.76 | **0.58** | 72.4 | 62.1 |
+| sDML | 0.74 | 1.62 | 72.0 | 101.7 |
+
+**What it shows.**
+
+1. *With three confounded treatments, paper 2's model beats the DML Forecaster on every axis*, the
+   reverse of the single-treatment study, and the DML transformer trails even the naive one on the
+   joint grid. The spread across runs (2.8 against a 22-point gap) rules out noise. Two mechanisms
+   are visible in the numbers: an outcome model that never sees horizon treatments loses about 13
+   points of on-policy accuracy once stock jumps and the list price steps inside the horizon (sDML
+   pays the same, so it is not the treatment model), and three treatments that co-move at
+   correlations near 0.5 leave little independent variation after residualization to identify
+   three coefficients per window from five noisy steps.
+
+2. *Declaring more treatments costs DML more than it buys.* The transformer DML's discount effect
+   is better when price and stock are covariates (0.58) than when they are residualized as
+   treatments (0.76), and the naive transformer's is two and a half times better (0.39 against
+   0.99). This is the variance side of the bias-variance trade: jointly residualizing three
+   collinear treatments inflates the effect estimates more than the omitted-treatment bias it
+   removes. The models with a structural discount head are indifferent to the declaration (0.33
+   and 0.34; 0.38 and 0.38), which is the behaviour one would want.
+
+3. *The omitted-treatment bias is real but needs the treatment model to be missing.* sDML, which
+   has no treatment model, goes from 0.74 to 1.62 when stock and price stop being treatments: the
+   horizon stock is then unobserved and its effect loads onto the discount. Every model with a
+   treatment model, or a structural head, is protected.
+
+4. *The list-price effect is unidentified on this data by every model.* The best error is 0.56
+   against a true magnitude of 1.4. Within-item log-price variation has a standard deviation of
+   0.09 and moves with the discount, so the promo premium the simulator was built to expose is not
+   separable here. That is a statement about the simulator's list-price policy, which is too slow
+   and too coupled to the discount to give the price effect its own variation, not about the
+   estimators; a study of the premium needs a price policy with an independent component.
+
+5. *The stock effect is recoverable but rarely active.* Its truth is near zero in early periods and
+   grows late in the season; the monotone head and the DML variants track it (0.13 to 0.23), the
+   naive transformer does not (0.84).
+
+Taken together: for a multi-treatment pricing problem on this evidence, use paper 2's monotone
+head, declare the extra treatments as inputs rather than residualized treatments, and expect the
+list-price elasticity to need an identification strategy of its own.
+<!-- /MULTI-RESULTS -->
 
 ## Data leakage audit
 

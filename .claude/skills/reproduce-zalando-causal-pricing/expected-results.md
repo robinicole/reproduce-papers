@@ -68,3 +68,28 @@ Checks:
   while `mdl` and `mdl-anchored` get *worse* on MAE over all windows, trading level for response.
 - The price-change slice holds 137 to 210 windows per origin, so treat small gaps there as
   suggestive. If it is empty, the discount definition in `data/m5_data.py` was changed.
+
+## Synthetic, multi setting (branch `multi-treatment`; three confounded treatments)
+
+`run_synthetic.py --setting multi --treatments all|discount`, 12 runs per cell. Effect errors are in
+effect space: true discount coefficient about 2.1, price about 1.4, stock slope 0.5 below the
+availability threshold.
+
+| model | joint off-policy MAE | discount effect error, all | discount effect error, discount-only |
+|---|---|---|---|
+| mdl / mdl-anchored | 59.5 / 59.6 | 0.33 / 0.41 | 0.34 / 0.41 |
+| dml-lgbm | 75.7 | 0.38 | 0.38 |
+| tf | 76.1 | 0.99 | 0.39 |
+| dml | 81.6 ± 5.3 | 0.76 | 0.58 |
+| sdml | 85.2 | 0.74 | 1.62 |
+
+Checks:
+- `mdl` has the lowest joint off-policy error by a wide margin (std about 3 against a 20-point gap
+  to `dml`), and the lowest discount effect error in both treatment modes.
+- The transformer DML variants have a *better* discount effect in discount-only mode than with all
+  three treatments; `sdml` has a much *worse* one (its horizon stock becomes an unobserved
+  confounder). If `sdml` does not collapse in discount-only mode, stock is leaking into its inputs.
+- Price effect error is above 0.5 for every model: the list-price effect is not identified on this
+  simulator (log-price sd about 0.09, correlated with the discount). That is expected, not a bug.
+- Stock effect error is near zero for early periods (the truth is near zero there) and grows in
+  later periods for all models; `tf` is the outlier at about 0.8.
